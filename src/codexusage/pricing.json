@@ -1,0 +1,31 @@
+{
+  "_comment": "USD per million tokens. prefix_fallback tried in order for unknown model names.",
+  "models": {
+    "gpt-5":            { "input": 2.50,  "cached_input": 0.625, "output": 10.00 },
+    "gpt-5-codex":      { "input": 2.50,  "cached_input": 0.625, "output": 10.00 },
+    "gpt-4.1":          { "input": 2.00,  "cached_input": 0.50,  "output": 8.00  },
+    "gpt-4.1-mini":     { "input": 0.40,  "cached_input": 0.10,  "output": 1.60  },
+    "gpt-4.1-nano":     { "input": 0.10,  "cached_input": 0.025, "output": 0.40  },
+    "gpt-4o":           { "input": 2.50,  "cached_input": 1.25,  "output": 10.00 },
+    "gpt-4o-mini":      { "input": 0.15,  "cached_input": 0.075, "output": 0.60  },
+    "o4-mini":          { "input": 1.10,  "cached_input": 0.275, "output": 4.40  },
+    "o3":               { "input": 10.00, "cached_input": 2.50,  "output": 40.00 },
+    "o3-mini":          { "input": 1.10,  "cached_input": 0.55,  "output": 4.40  },
+    "o1":               { "input": 15.00, "cached_input": 7.50,  "output": 60.00 },
+    "o1-mini":          { "input": 1.10,  "cached_input": 0.55,  "output": 4.40  }
+  },
+  "prefix_fallback": [
+    { "prefix": "gpt-5",       "input": 2.50,  "cached_input": 0.625, "output": 10.00 },
+    { "prefix": "gpt-4.1-mini","input": 0.40,  "cached_input": 0.10,  "output": 1.60  },
+    { "prefix": "gpt-4.1-nano","input": 0.10,  "cached_input": 0.025, "output": 0.40  },
+    { "prefix": "gpt-4.1",     "input": 2.00,  "cached_input": 0.50,  "output": 8.00  },
+    { "prefix": "gpt-4o-mini", "input": 0.15,  "cached_input": 0.075, "output": 0.60  },
+    { "prefix": "gpt-4o",      "input": 2.50,  "cached_input": 1.25,  "output": 10.00 },
+    { "prefix": "o4-mini",     "input": 1.10,  "cached_input": 0.275, "output": 4.40  },
+    { "prefix": "o3-mini",     "input": 1.10,  "cached_input": 0.55,  "output": 4.40  },
+    { "prefix": "o3",          "input": 10.00, "cached_input": 2.50,  "output": 40.00 },
+    { "prefix": "o1-mini",     "input": 1.10,  "cached_input": 0.55,  "output": 4.40  },
+    { "prefix": "o1",          "input": 15.00, "cached_input": 7.50,  "output": 60.00 }
+  ],
+  "default": { "input": 2.50, "cached_input": 0.625, "output": 10.00 }
+}
