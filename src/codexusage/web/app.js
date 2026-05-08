@@ -12,12 +12,17 @@ const fmt = {
   modelBadge(m) {
     const s = (m || '').toLowerCase();
     let cls = '';
-    if (s.includes('gpt-5') || s.includes('gpt5'))              cls = 'gpt5';
+    if (s.includes('gpt-5') || s.includes('gpt5'))               cls = 'gpt5';
     else if (s.includes('gpt-4o-mini') || s.includes('4o-mini')) cls = 'gpt4o-mini';
     else if (s.includes('gpt-4o') || s.includes('4o'))           cls = 'gpt4o';
     else if (s.match(/^o\d/) || s.includes('/o4') || s.includes('/o3') || s.includes('/o1')) cls = 'o-series';
     const label = (m || '').replace(/^(openai|azure|openrouter\/openai|openrouter)\//i, '');
     return `<span class="badge ${cls}">${label}</span>`;
+  },
+  effortBadge(effort) {
+    if (!effort || effort === 'none') return '<span class="muted">—</span>';
+    const cls = { xhigh: 'effort-xhigh', high: 'effort-high', medium: 'effort-medium', low: 'effort-low' }[effort] || '';
+    return `<span class="badge ${cls}">${effort}</span>`;
   },
 };
 
@@ -25,6 +30,47 @@ async function api(path) {
   const r = await fetch(path);
   if (!r.ok) throw new Error(`${path} → ${r.status}`);
   return r.json();
+}
+
+// ── Project filter state ──────────────────────────────────────────────────────
+let _activeProject = 'all';
+
+function applyProjectFilter(data) {
+  if (_activeProject === 'all') return data;
+  const proj = (data.config?.projects || []).find(p => p.name === _activeProject);
+  const isApiToken = proj?.auth_type === 'api_token';
+  const projUsd = (data.projects || []).find(p => p.name === _activeProject)?.usd ?? 0;
+  return {
+    ...data,
+    models:          data.models.filter(m => (m.projects || []).includes(_activeProject)),
+    sessions:        data.sessions.filter(s => s.project === _activeProject),
+    projects:        (data.projects || []).filter(p => p.name === _activeProject),
+    effort_levels:   [],
+    has_effort_data: false,
+    has_oauth:       isApiToken ? false : data.has_oauth,
+    has_api_token:   isApiToken,
+    api_token_totals: isApiToken ? { usd: projUsd } : data.api_token_totals,
+  };
+}
+
+// ── Project pills ─────────────────────────────────────────────────────────────
+function renderProjectPills(cfgProjects) {
+  if (!cfgProjects || cfgProjects.length <= 1) return '';
+  const pills = [{ name: 'all', auth_type: '' }, ...cfgProjects].map(p => {
+    const active = _activeProject === p.name ? ' active' : '';
+    const cls    = p.auth_type === 'api_token' ? ' api-token' : '';
+    return `<button class="pill-btn${active}${cls}" data-project="${p.name}">${p.name === 'all' ? 'All Projects' : p.name}</button>`;
+  }).join('');
+  return `<div class="project-pills">${pills}</div>`;
+}
+
+function initProjectPills(app, cfgProjects) {
+  $$('.pill-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _activeProject = btn.dataset.project;
+      _paintOverview(app, cfgProjects);
+    });
+  });
 }
 
 // ── Pool bar ──────────────────────────────────────────────────────────────────
@@ -56,8 +102,41 @@ function renderPool(pool, rangeLabel) {
     </div>`;
 }
 
+// ── API token card ────────────────────────────────────────────────────────────
+function renderApiTokenCard(api_token_totals, projects) {
+  if (!api_token_totals || !api_token_totals.usd) return '';
+  const apiProjects = (projects || []).filter(p => p.auth_type === 'api_token');
+  const rows = apiProjects.length > 1
+    ? apiProjects.map(p => `
+        <tr>
+          <td class="mono" style="font-size:11px">${p.name}</td>
+          <td class="num">${fmt.int(p.events)}</td>
+          <td class="num">${fmt.int(p.total_tokens)}</td>
+          <td class="num">${fmt.usd(p.usd)}</td>
+        </tr>`).join('')
+    : '';
+  return `
+    <div class="card api-token-card">
+      <div class="pool-header"><h2>API Token Spend</h2></div>
+      <div class="api-token-total">${fmt.usd(api_token_totals.usd)}</div>
+      ${rows ? `
+      <table style="margin-top:14px">
+        <thead><tr>
+          <th>Project</th><th class="num">Events</th>
+          <th class="num">Tokens</th><th class="num">USD</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>` : ''}
+    </div>`;
+}
+
 // ── KPI cards ─────────────────────────────────────────────────────────────────
-function renderKPIs(totals) {
+function renderKPIs(totals, hasOauth) {
+  const creditsCard = hasOauth ? `
+      <div class="card kpi">
+        <div class="label">Credits used</div>
+        <div class="value">${fmt.cr(totals.credits)}</div>
+      </div>` : '';
   return `
     <div class="kpi-row">
       <div class="card kpi">
@@ -65,22 +144,25 @@ function renderKPIs(totals) {
         <div class="value">${fmt.int(totals.total_tokens)}</div>
       </div>
       <div class="card kpi">
-        <div class="label">USD cost</div>
+        <div class="label">${hasOauth ? 'USD cost' : 'Total spend'}</div>
         <div class="value" style="color:var(--good)">${fmt.usd(totals.usd)}</div>
       </div>
-      <div class="card kpi">
-        <div class="label">Credits used</div>
-        <div class="value">${fmt.cr(totals.credits)}</div>
-      </div>
+      ${creditsCard}
     </div>`;
 }
 
 // ── Daily chart (ECharts) ─────────────────────────────────────────────────────
-function renderChart(days) {
+function renderChart(days, hasOauth, hasApiToken) {
+  // Pure OAuth: show credits (existing behaviour). Mixed or pure API token: show USD.
+  const useCredits = hasOauth && !hasApiToken;
+  const getMetric  = d => useCredits ? d.credits : d.usd;
+  const fmtVal     = v => useCredits ? v.toFixed(4) + ' cr' : '$' + v.toFixed(4);
+  const fmtAxis    = v => useCredits ? v.toFixed(2) : '$' + v.toFixed(4);
+
   const dates  = days.map(d => d.date);
-  const input  = days.map(d => +(d.credits * (d.input_tokens  / Math.max(d.total_tokens, 1))).toFixed(4));
-  const cached = days.map(d => +(d.credits * (d.cached_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
-  const output = days.map(d => +(d.credits * (d.output_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
+  const input  = days.map(d => +(getMetric(d) * (d.input_tokens  / Math.max(d.total_tokens, 1))).toFixed(4));
+  const cached = days.map(d => +(getMetric(d) * (d.cached_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
+  const output = days.map(d => +(getMetric(d) * (d.output_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
 
   const el = $('#daily-chart');
   if (!el) return;
@@ -90,19 +172,19 @@ function renderChart(days) {
 
   _chart.setOption({
     backgroundColor: 'transparent',
-    grid: { top: 10, bottom: 30, left: 50, right: 10 },
+    grid: { top: 10, bottom: 30, left: 60, right: 10 },
     tooltip: {
       trigger: 'axis', axisPointer: { type: 'shadow' },
       backgroundColor: '#131922', borderColor: '#1F2630',
       textStyle: { color: '#E6EDF3', fontSize: 12 },
       formatter: params => {
         const total = params.reduce((s, p) => s + p.value, 0);
-        const rows = params.map(p => `${p.marker} ${p.seriesName}: ${p.value.toFixed(4)} cr`).join('<br>');
-        return `${params[0].name}<br>${rows}<br><b>Total: ${total.toFixed(4)} cr</b>`;
+        const rows = params.map(p => `${p.marker} ${p.seriesName}: ${fmtVal(p.value)}`).join('<br>');
+        return `${params[0].name}<br>${rows}<br><b>Total: ${fmtVal(total)}</b>`;
       },
     },
     xAxis: { type: 'category', data: dates, axisLabel: { color: '#8B98A6', fontSize: 11 }, axisLine: { lineStyle: { color: '#1F2630' } } },
-    yAxis: { type: 'value', axisLabel: { color: '#8B98A6', fontSize: 11, formatter: v => v.toFixed(2) }, splitLine: { lineStyle: { color: '#1F2630' } } },
+    yAxis: { type: 'value', axisLabel: { color: '#8B98A6', fontSize: 11, formatter: fmtAxis }, splitLine: { lineStyle: { color: '#1F2630' } } },
     series: [
       { name: 'Input',  type: 'bar', stack: 'total', data: input,  itemStyle: { color: '#4A9EFF' } },
       { name: 'Cached', type: 'bar', stack: 'total', data: cached, itemStyle: { color: '#2A5A99' } },
@@ -111,22 +193,82 @@ function renderChart(days) {
   });
 }
 
+// ── Projects table ────────────────────────────────────────────────────────────
+function renderProjectsTable(projects, hasOauth) {
+  if (!projects || !projects.length) return '<p class="muted">No data.</p>';
+  const creditsHead = hasOauth ? '<th class="num">Credits</th>' : '';
+  const rows = projects.map(p => {
+    const authBadge   = p.auth_type === 'api_token'
+      ? '<span class="badge api-token-badge">api token</span>'
+      : '<span class="badge oauth-badge">oauth</span>';
+    const creditsCell = hasOauth
+      ? `<td class="num">${p.auth_type === 'oauth' ? fmt.cr(p.credits) : '<span class="muted">—</span>'}</td>`
+      : '';
+    return `<tr>
+      <td class="mono">${p.name}</td>
+      <td>${authBadge}</td>
+      <td class="num">${fmt.int(p.events)}</td>
+      <td class="num">${fmt.int(p.total_tokens)}</td>
+      <td class="num">${fmt.usd(p.usd)}</td>
+      ${creditsCell}
+    </tr>`;
+  }).join('');
+  return `
+    <table>
+      <thead><tr>
+        <th>Project</th><th>Auth</th><th class="num">Events</th>
+        <th class="num">Tokens</th><th class="num">USD</th>${creditsHead}
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
 // ── Models table ──────────────────────────────────────────────────────────────
-function renderModels(models) {
+function renderModels(models, multiProject) {
   if (!models.length) return '<p class="muted">No data.</p>';
-  const rows = models.map(m => `
-    <tr>
+  const projHead = multiProject ? '<th>Projects</th>' : '';
+  const rows = models.map(m => {
+    const projCell = multiProject
+      ? `<td class="mono" style="font-size:11px">${(m.projects || []).join(', ')}</td>`
+      : '';
+    return `<tr>
       <td>${fmt.modelBadge(m.model)}</td>
+      ${projCell}
       <td class="num">${fmt.int(m.events)}</td>
       <td class="num">${fmt.int(m.total_tokens)}</td>
       <td class="num">${fmt.usd(m.usd)}</td>
       <td class="num">${fmt.cr(m.credits)}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
   return `
     <table>
       <thead><tr>
-        <th>Model</th><th class="num">Events</th><th class="num">Tokens</th>
-        <th class="num">USD</th><th class="num">Credits</th>
+        <th>Model</th>${projHead}<th class="num">Events</th>
+        <th class="num">Tokens</th><th class="num">USD</th><th class="num">Credits</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+// ── Effort table ──────────────────────────────────────────────────────────────
+function renderEffortTable(effort_levels, hasOauth) {
+  if (!effort_levels || !effort_levels.length) return '<p class="muted">No data.</p>';
+  const creditsHead = hasOauth ? '<th class="num">Credits</th>' : '';
+  const rows = effort_levels.map(e => {
+    const creditsCell = hasOauth ? `<td class="num">${fmt.cr(e.credits)}</td>` : '';
+    return `<tr>
+      <td>${fmt.effortBadge(e.effort)}</td>
+      <td class="num">${fmt.int(e.events)}</td>
+      <td class="num">${fmt.int(e.total_tokens)}</td>
+      <td class="num">${fmt.usd(e.usd)}</td>
+      ${creditsCell}
+    </tr>`;
+  }).join('');
+  return `
+    <table>
+      <thead><tr>
+        <th>Effort</th><th class="num">Events</th>
+        <th class="num">Tokens</th><th class="num">USD</th>${creditsHead}
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -135,20 +277,30 @@ function renderModels(models) {
 // ── Sessions table ────────────────────────────────────────────────────────────
 function renderSessionsTable(sessions) {
   if (!sessions.length) return '<p class="muted">No sessions.</p>';
-  const rows = sessions.map(s => `
-    <tr>
+  const multiProject = sessions.some(s => s.project && s.project !== 'default');
+  const hasEffort    = sessions.some(s => s.reasoning_effort);
+  const projHead = multiProject ? '<th>Project</th>' : '';
+  const effHead  = hasEffort    ? '<th>Effort</th>'  : '';
+  const rows = sessions.map(s => {
+    const projCell = multiProject ? `<td class="mono" style="font-size:11px">${s.project || '—'}</td>` : '';
+    const effCell  = hasEffort    ? `<td>${fmt.effortBadge(s.reasoning_effort)}</td>` : '';
+    return `<tr>
       <td class="mono">${fmt.short(s.session_id)}</td>
       <td class="mono">${fmt.ts(s.last_timestamp)}</td>
+      ${projCell}
+      ${effCell}
       <td class="num">${s.events}</td>
       <td class="num">${fmt.int(s.total_tokens)}</td>
       <td class="num">${fmt.usd(s.usd)}</td>
       <td class="num">${fmt.cr(s.credits)}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
   return `
     <table>
       <thead><tr>
-        <th>Session</th><th>Date</th><th class="num">Events</th>
-        <th class="num">Tokens</th><th class="num">USD</th><th class="num">Credits</th>
+        <th>Session</th><th>Date</th>${projHead}${effHead}
+        <th class="num">Events</th><th class="num">Tokens</th>
+        <th class="num">USD</th><th class="num">Credits</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -213,6 +365,48 @@ function buildOverviewControls() {
     </div>`;
 }
 
+function _paintOverview(app, cfgProjects) {
+  if (!_lastData) return;
+  cfgProjects = cfgProjects || _lastData.config?.projects || [];
+  const multiProject = cfgProjects.length > 1;
+
+  const filtered = applyProjectFilter(_lastData);
+  const { pool, totals, days, models, sessions, range,
+          projects, effort_levels, api_token_totals,
+          has_oauth, has_api_token, has_effort_data } = filtered;
+
+  const wk = weekLabel();
+  const fmtDT = s => s ? s.replace('T', ' ') : s;
+  const label = (range.since === wk.since && range.until === wk.until)
+    ? 'this week'
+    : `${fmtDT(range.since)} .. ${fmtDT(range.until)}`;
+
+  app.innerHTML = `
+    ${multiProject ? renderProjectPills(cfgProjects) : ''}
+    ${buildOverviewControls()}
+    ${has_oauth ? renderPool(pool, label) : ''}
+    ${renderKPIs(totals, has_oauth)}
+    ${has_api_token ? renderApiTokenCard(api_token_totals, filtered.projects) : ''}
+    <div class="card">
+      <h2>Daily breakdown (${label})</h2>
+      <div class="chart-box" id="daily-chart"></div>
+    </div>
+    ${multiProject ? `<div class="card"><h2>By project</h2>${renderProjectsTable(filtered.projects, has_oauth)}</div>` : ''}
+    <div class="card">
+      <h2>By model</h2>
+      ${renderModels(filtered.models, multiProject)}
+    </div>
+    ${has_effort_data ? `<div class="card"><h2>By effort level</h2>${renderEffortTable(effort_levels, has_oauth)}</div>` : ''}
+    <div class="card">
+      <h2>Sessions (${label})</h2>
+      ${renderSessionsTable(filtered.sessions.slice(0, 20))}
+    </div>`;
+
+  renderChart(days, has_oauth, has_api_token);
+  initOverviewControls();
+  if (multiProject) initProjectPills(app, cfgProjects);
+}
+
 async function renderOverview(app) {
   // Build the URL from state before touching the DOM — inputs live inside app.
   let url = '/api/week';
@@ -229,36 +423,11 @@ async function renderOverview(app) {
     return;
   }
 
-  const { pool, totals, days, models, sessions, range } = _lastData;
   // Sync state to what the server actually used (respects config/default overrides).
-  _since = range.since;
-  _until = range.until;
+  _since = _lastData.range.since;
+  _until = _lastData.range.until;
 
-  const wk = weekLabel();
-  const fmtDT = s => s ? s.replace('T', ' ') : s;
-  const label = (range.since === wk.since && range.until === wk.until)
-    ? 'this week'
-    : `${fmtDT(range.since)} .. ${fmtDT(range.until)}`;
-
-  app.innerHTML = `
-    ${buildOverviewControls()}
-    ${renderPool(pool, label)}
-    ${renderKPIs(totals)}
-    <div class="card">
-      <h2>Daily breakdown (${label})</h2>
-      <div class="chart-box" id="daily-chart"></div>
-    </div>
-    <div class="card">
-      <h2>By model</h2>
-      ${renderModels(models)}
-    </div>
-    <div class="card">
-      <h2>Sessions (${label})</h2>
-      ${renderSessionsTable(sessions.slice(0, 20))}
-    </div>`;
-  renderChart(days);
-  // Re-attach listeners since the controls were just re-rendered into fresh DOM.
-  initOverviewControls();
+  _paintOverview(app);
 }
 
 async function renderSessionsRoute(app) {

@@ -60,12 +60,30 @@ def _extract_model(payload: object) -> Optional[str]:
     return None
 
 
+def _extract_effort(payload: object) -> Optional[str]:
+    """Extract reasoning effort level (low/medium/high/xhigh) from a payload dict."""
+    if not isinstance(payload, dict):
+        return None
+    for key in ("reasoning_effort", "effort", "effort_level"):
+        v = payload.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    info = payload.get("info")
+    if isinstance(info, dict):
+        for key in ("reasoning_effort", "effort", "effort_level"):
+            v = info.get(key)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+    return None
+
+
 _LEGACY_FALLBACK = "gpt-5"
 
 
 def _parse_file(path: Path, session_id: str) -> list[dict]:
     events: list[dict] = []
     current_model: Optional[str] = None
+    current_effort: Optional[str] = None
     previous_totals: Optional[dict] = None
 
     try:
@@ -92,6 +110,9 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
             model = _extract_model(payload)
             if model:
                 current_model = model
+            effort = _extract_effort(payload)
+            if effort:
+                current_effort = effort
             continue
 
         if entry_type != "event_msg" or not isinstance(payload, dict):
@@ -124,8 +145,9 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
         if raw["total_tokens"] == 0:
             continue
 
-        # Model from event payload overrides session-level context
-        event_model = _extract_model(payload) or current_model or _LEGACY_FALLBACK
+        # Model and effort from event payload override session-level context
+        event_model  = _extract_model(payload) or current_model or _LEGACY_FALLBACK
+        event_effort = _extract_effort(payload) or current_effort
 
         events.append({
             "session_id":              session_id,
@@ -136,6 +158,7 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
             "output_tokens":           raw["output_tokens"],
             "reasoning_output_tokens": raw["reasoning_output_tokens"],
             "total_tokens":            raw["total_tokens"],
+            "reasoning_effort":        event_effort,
         })
 
     return events
@@ -156,5 +179,18 @@ def scan_sessions(sessions_dir: str) -> list[dict]:
         session_id = str(rel).replace("\\", "/").removesuffix(".jsonl")
         all_events.extend(_parse_file(path, session_id))
 
+    all_events.sort(key=lambda e: e["timestamp"])
+    return all_events
+
+
+def scan_all_projects(projects: list[dict]) -> list[dict]:
+    """Scan all projects and tag each event with project name and auth_type."""
+    all_events: list[dict] = []
+    for proj in projects:
+        events = scan_sessions(proj["sessions_dir"])
+        for e in events:
+            e["project"]   = proj["name"]
+            e["auth_type"] = proj.get("auth_type", "oauth")
+        all_events.extend(events)
     all_events.sort(key=lambda e: e["timestamp"])
     return all_events
