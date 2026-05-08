@@ -34,8 +34,10 @@ function renderPool(pool, rangeLabel) {
   const isDefaultWeek = !rangeLabel || rangeLabel === 'this week';
   const title = isDefaultWeek ? 'Weekly Credit Pool' : `Credits — ${rangeLabel}`;
   const d = new Date();
-  const daysLeft = 7 - d.getDay() || 7;
-  const meta = isDefaultWeek ? `resets Monday · ${daysLeft} day${daysLeft !== 1 ? 's' : ''} left` : '';
+  const daysSinceFri = (d.getDay() + 2) % 7;
+  const daysLeft = daysSinceFri === 0 && d.getHours() < 17 ? 0 : (7 - daysSinceFri) || 7;
+  const resetNote = daysLeft === 0 ? 'resets today at 17:00' : `resets Friday · ${daysLeft} day${daysLeft !== 1 ? 's' : ''} left`;
+  const meta = isDefaultWeek ? resetNote : '';
   return `
     <div class="card pool-card">
       <div class="pool-header">
@@ -173,11 +175,13 @@ function todayLabel()    { return localDate(new Date()); }
 function tomorrowLabel() { const d = new Date(); return localDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)); }
 function weekLabel() {
   const d = new Date();
-  // (d.getDay() + 6) % 7 gives 0 for Monday … 6 for Sunday, matching Python's weekday()
-  const offset = (d.getDay() + 6) % 7;
-  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - offset);
-  const nextMon = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7);
-  return { since: localDate(monday), until: localDate(nextMon) };
+  // getDay(): 0=Sun 1=Mon … 5=Fri 6=Sat  →  (getDay()+2)%7 = days since Friday
+  let daysSinceFri = (d.getDay() + 2) % 7;
+  // On Friday before 17:00 the new billing week hasn't opened yet — use previous Friday.
+  if (daysSinceFri === 0 && d.getHours() < 17) daysSinceFri = 7;
+  const friday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - daysSinceFri);
+  const nextFri = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate() + 7);
+  return { since: localDate(friday), until: localDate(nextFri) };
 }
 
 // ── Overview ──────────────────────────────────────────────────────────────────

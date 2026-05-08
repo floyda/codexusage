@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 import webbrowser
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from .config import load_config, save_config
 from .pricing import load_pricing, tokens_to_usd, usd_to_credits
@@ -98,11 +98,14 @@ def cmd_week(args):
         label = f"{since} .. {until}"
     else:
         n = getattr(args, "weeks", None) or 1
-        d = date.today()
-        monday = d - timedelta(days=d.weekday())
-        until = (monday + timedelta(weeks=1)).isoformat()
-        since = (monday - timedelta(weeks=n - 1)).isoformat()
-        label = f"last {n} weeks (since {since})" if n > 1 else f"week of {monday.isoformat()}"
+        now = datetime.now()
+        days_since_fri = (now.weekday() - 4) % 7
+        if days_since_fri == 0 and now.hour < 17:
+            days_since_fri = 7
+        friday = now.date() - timedelta(days=days_since_fri)
+        until = (friday + timedelta(weeks=1)).isoformat()
+        since = (friday - timedelta(weeks=n - 1)).isoformat()
+        label = f"last {n} weeks (since {since})" if n > 1 else f"week of {friday.isoformat()}"
     _print_summary(label, _scoped_events(events, since, until), cfg)
 
 

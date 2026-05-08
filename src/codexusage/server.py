@@ -17,12 +17,16 @@ from .pricing import load_pricing, tokens_to_usd, usd_to_credits
 from .scanner import scan_sessions
 
 
-def _week_bounds(today: Optional[date] = None) -> tuple[str, str]:
-    """Return (since, until) ISO strings for the current Mon–Sun week in local time."""
-    d = today or date.today()
-    monday = d - timedelta(days=d.weekday())
-    sunday = monday + timedelta(days=7)
-    return monday.isoformat(), sunday.isoformat()
+def _week_bounds(now: Optional[datetime] = None) -> tuple[str, str]:
+    """Return (since, until) for the current Fri-17:00 → Fri-17:00 billing week."""
+    dt = now or datetime.now()
+    # weekday(): Mon=0 … Fri=4 … Sun=6  →  days since last Friday
+    days_since_fri = (dt.weekday() - 4) % 7
+    # On Friday before 17:00 the new week hasn't started yet — use previous Friday.
+    if days_since_fri == 0 and dt.hour < 17:
+        days_since_fri = 7
+    friday = dt.date() - timedelta(days=days_since_fri)
+    return friday.isoformat(), (friday + timedelta(weeks=1)).isoformat()
 
 
 def _today_bounds() -> tuple[str, str]:
