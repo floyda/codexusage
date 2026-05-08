@@ -35,11 +35,18 @@ def tokens_to_usd(model: str, event: dict, pricing: dict) -> float:
     if rates is None:
         return 0.0
     M = 1_000_000
+    input_tokens = event.get("input_tokens", 0)
+    cached_tokens = event.get("cached_input_tokens", 0)
+    # Codex reports input_tokens as the total (cached is a subset). Bill the
+    # non-cached portion at the input rate and the cached portion at the
+    # discounted cached rate, mirroring ccusage's calculateCostUSD.
+    non_cached = max(input_tokens - cached_tokens, 0)
+    cached = min(cached_tokens, input_tokens)
     return (
-        event.get("input_tokens", 0)        * rates["input"]        / M
-        + event.get("cached_input_tokens", 0) * rates["cached_input"] / M
-        + event.get("output_tokens", 0)       * rates["output"]       / M
-    )
+        non_cached * rates["input"]
+        + cached * rates["cached_input"]
+        + event.get("output_tokens", 0) * rates["output"]
+    ) / M
 
 
 def usd_to_credits(usd: float, credits_per_dollar: float) -> float:
