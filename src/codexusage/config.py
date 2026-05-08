@@ -8,7 +8,7 @@ from typing import Any
 
 DEFAULTS: dict[str, Any] = {
     "weekly_pool_credits": 2500.0,
-    "credits_per_dollar": 65.0,
+    "credits_per_dollar": 25.0,
     "sessions_dir": "",
     "port": 8080,
 }
