@@ -137,7 +137,8 @@ td.mono { font-family: var(--mono); color: var(--muted); font-size: 12px; }
 /* sessions tab */
 .filter-row { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
 .filter-row label { color: var(--muted); font-size: 12px; }
-.filter-row input[type=date] {
+.filter-row input[type=date],
+.filter-row input[type=time] {
   background: var(--panel-2); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
   padding: 5px 8px; font-size: 12px; font-family: var(--mono);

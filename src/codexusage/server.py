@@ -10,7 +10,7 @@ from importlib.resources import files
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
-_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$')
 
 from .config import load_config
 from .pricing import load_pricing, tokens_to_usd, usd_to_credits
@@ -26,7 +26,7 @@ def _week_bounds(now: Optional[datetime] = None) -> tuple[str, str]:
     if days_since_fri == 0 and dt.hour < 17:
         days_since_fri = 7
     friday = dt.date() - timedelta(days=days_since_fri)
-    return friday.isoformat(), (friday + timedelta(weeks=1)).isoformat()
+    return f"{friday}T17:00", f"{friday + timedelta(weeks=1)}T17:00"
 
 
 def _today_bounds() -> tuple[str, str]:
@@ -35,7 +35,9 @@ def _today_bounds() -> tuple[str, str]:
 
 
 def _in_range(timestamp: str, since: str, until: str) -> bool:
-    ts = timestamp[:10]
+    # When boundaries carry a time component, compare the full timestamp so the
+    # Fri-17:00 cutoff is respected precisely; otherwise compare date-only.
+    ts = timestamp if len(since) > 10 or len(until) > 10 else timestamp[:10]
     return since <= ts < until
 
 

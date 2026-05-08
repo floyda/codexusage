@@ -181,17 +181,31 @@ function weekLabel() {
   if (daysSinceFri === 0 && d.getHours() < 17) daysSinceFri = 7;
   const friday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - daysSinceFri);
   const nextFri = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate() + 7);
-  return { since: localDate(friday), until: localDate(nextFri) };
+  return { since: localDate(friday) + 'T17:00', until: localDate(nextFri) + 'T17:00' };
+}
+
+// Split a "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM" string into [date, time] parts.
+function splitDT(dt) {
+  if (!dt) return ['', '00:00'];
+  const i = dt.indexOf('T');
+  return i === -1 ? [dt, '00:00'] : [dt.slice(0, i), dt.slice(i + 1, i + 6)];
 }
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 function buildOverviewControls() {
-  const sinceVal = _since || weekLabel().since;
-  const untilVal = _until || tomorrowLabel();
+  const wk = weekLabel();
+  const [sinceDate, sinceTime] = splitDT(_since || wk.since);
+  const [untilDate, untilTime] = splitDT(_until || wk.until);
   return `
     <div class="filter-row controls">
-      <label>From <input type="date" id="since-input" value="${sinceVal}"></label>
-      <label>To   <input type="date" id="until-input" value="${untilVal}"></label>
+      <label>From
+        <input type="date" id="since-date" value="${sinceDate}">
+        <input type="time" id="since-time" value="${sinceTime}">
+      </label>
+      <label>To
+        <input type="date" id="until-date" value="${untilDate}">
+        <input type="time" id="until-time" value="${untilTime}">
+      </label>
       <button class="preset-btn" data-mode="week">This week</button>
       <button class="preset-btn" data-days="14">2 weeks</button>
       <button class="preset-btn" data-days="21">3 weeks</button>
@@ -221,11 +235,10 @@ async function renderOverview(app) {
   _until = range.until;
 
   const wk = weekLabel();
-  const label = (range.since === todayLabel()  && range.until === tomorrowLabel())
-    ? 'today'
-    : (range.since === wk.since && range.until === wk.until)
-      ? 'this week'
-      : `${range.since} .. ${range.until}`;
+  const fmtDT = s => s ? s.replace('T', ' ') : s;
+  const label = (range.since === wk.since && range.until === wk.until)
+    ? 'this week'
+    : `${fmtDT(range.since)} .. ${fmtDT(range.until)}`;
 
   app.innerHTML = `
     ${buildOverviewControls()}
@@ -303,8 +316,10 @@ function initOverviewControls() {
   const applyBtn = $('#apply-btn');
   if (applyBtn) {
     applyBtn.addEventListener('click', () => {
-      _since = $('#since-input').value || null;
-      _until = $('#until-input').value || null;
+      const sd = $('#since-date').value, st = $('#since-time').value || '00:00';
+      const ud = $('#until-date').value, ut = $('#until-time').value || '00:00';
+      _since = sd ? `${sd}T${st}` : null;
+      _until = ud ? `${ud}T${ut}` : null;
       renderOverview($('#app'));
     });
   }
@@ -312,15 +327,14 @@ function initOverviewControls() {
     btn.addEventListener('click', () => {
       const d = new Date();
       if (btn.dataset.mode === 'week') {
-        // Full calendar week Mon–Sun, matching the server's default /api/week range.
+        // Billing week: Fri 17:00 → next Fri 17:00.
         const wk = weekLabel();
         _since = wk.since;
         _until = wk.until;
       } else {
         const days = parseInt(btn.dataset.days, 10);
-        _since = localDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (days - 1)));
-        // until = tomorrow so today's events are included (API uses < until).
-        _until = tomorrowLabel();
+        _since = localDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (days - 1))) + 'T00:00';
+        _until = tomorrowLabel() + 'T00:00';
       }
       renderOverview($('#app'));
     });
