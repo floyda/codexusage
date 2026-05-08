@@ -27,21 +27,28 @@ def _today_range():
     return d.isoformat(), (d + timedelta(days=1)).isoformat()
 
 
-def _week_range():
-    d = date.today()
-    monday = d - timedelta(days=d.weekday())
-    return monday.isoformat(), (monday + timedelta(days=7)).isoformat()
+def _user_range(args) -> tuple[str, str] | None:
+    """Return (since, until) if user specified explicit dates, else None."""
+    since = getattr(args, "since", None)
+    until = getattr(args, "until", None)
+    if since:
+        if not until:
+            until = (date.today() + timedelta(days=1)).isoformat()
+        return since, until
+    return None
 
 
-def _print_summary(label: str, events: list[dict], since: str, until: str, cfg: dict) -> None:
+def _scoped_events(events: list[dict], since: str, until: str) -> list[dict]:
+    return [e for e in events if since <= e["timestamp"][:10] < until]
+
+
+def _print_summary(label: str, events: list[dict], cfg: dict) -> None:
     pricing = load_pricing()
     cpd = cfg["credits_per_dollar"]
     pool = cfg["weekly_pool_credits"]
 
-    filtered = [e for e in events if since <= e["timestamp"][:10] < until]
-
     models: dict[str, dict] = {}
-    for e in filtered:
+    for e in events:
         m = e["model"]
         if m not in models:
             models[m] = {"tokens": 0, "usd": 0.0, "credits": 0.0}
@@ -76,19 +83,33 @@ def _print_summary(label: str, events: list[dict], since: str, until: str, cfg: 
 def cmd_today(args):
     cfg = _merge_cfg(load_config(), args)
     events = scan_sessions(cfg["sessions_dir"])
-    since, until = _today_range()
-    _print_summary("today", events, since, until, cfg)
+    user = _user_range(args)
+    since, until = user if user else _today_range()
+    label = f"{since} .. {until}" if user else "today"
+    _print_summary(label, _scoped_events(events, since, until), cfg)
 
 
 def cmd_week(args):
     cfg = _merge_cfg(load_config(), args)
     events = scan_sessions(cfg["sessions_dir"])
-    since, until = _week_range()
-    _print_summary(f"week of {since}", events, since, until, cfg)
+    user = _user_range(args)
+    if user:
+        since, until = user
+        label = f"{since} .. {until}"
+    else:
+        n = getattr(args, "weeks", None) or 1
+        d = date.today()
+        monday = d - timedelta(days=d.weekday())
+        until = (monday + timedelta(weeks=1)).isoformat()
+        since = (monday - timedelta(weeks=n - 1)).isoformat()
+        label = f"last {n} weeks (since {since})" if n > 1 else f"week of {monday.isoformat()}"
+    _print_summary(label, _scoped_events(events, since, until), cfg)
 
 
 def cmd_dashboard(args):
     cfg = _merge_cfg(load_config(), args)
+    cfg.pop("since", None)
+    cfg.pop("until", None)
     port = getattr(args, "port", None) or cfg["port"]
     host = "127.0.0.1"
     url = f"http://{host}:{port}/"
@@ -131,11 +152,23 @@ def cmd_config_set(args):
     print(f"  port                : {cfg['port']}")
 
 
+def _date_arg(s: str) -> str:
+    try:
+        date.fromisoformat(s)
+        return s
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid date '{s}' — expected YYYY-MM-DD")
+
+
 def main():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--sessions-dir", help="Path to Codex sessions directory")
     common.add_argument("--weekly-pool",  type=float, metavar="N", help="Weekly credit pool size")
     common.add_argument("--credits-per-dollar", type=float, metavar="N", help="Credits per USD")
+    common.add_argument("--since", type=_date_arg, metavar="YYYY-MM-DD",
+                        help="Start date — overrides default range")
+    common.add_argument("--until", type=_date_arg, metavar="YYYY-MM-DD",
+                        help="End date (exclusive)")
 
     p = argparse.ArgumentParser(
         prog="codexusage",
@@ -145,9 +178,13 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("today",     parents=[common], add_help=True,
-                   help="Print today's token/credit summary").set_defaults(func=cmd_today)
-    sub.add_parser("week",      parents=[common], add_help=True,
-                   help="Print this week's token/credit summary").set_defaults(func=cmd_week)
+                   help="Print today's token/credit summary (or custom range with --since/--until)").set_defaults(func=cmd_today)
+
+    w = sub.add_parser("week",      parents=[common], add_help=True,
+                   help="Print weekly token/credit summary (or custom range with --since/--until)")
+    w.add_argument("--weeks", type=int, metavar="N",
+                   help="Look back N weeks from today (default 1)")
+    w.set_defaults(func=cmd_week)
 
     d = sub.add_parser("dashboard", parents=[common], add_help=True,
                        help="Start the web dashboard")

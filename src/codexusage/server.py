@@ -4,10 +4,13 @@ from __future__ import annotations
 import http.server
 import json
 import mimetypes
+import re
 from datetime import date, datetime, timedelta, timezone
 from importlib.resources import files
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
+
+_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
 from .config import load_config
 from .pricing import load_pricing, tokens_to_usd, usd_to_credits
@@ -173,11 +176,17 @@ def build_handler(cfg: dict):
                 return _serve_static(self, path[5:].lstrip("/"))
 
             if path in ("/api/week", "/api/today"):
+                qs_since = qs.get("since", [None])[0]
+                qs_until = qs.get("until", [None])[0]
+                if qs_since and not _DATE_RE.match(qs_since):
+                    return _send_json(self, {"error": "invalid since — expected YYYY-MM-DD"}, 400)
+                if qs_until and not _DATE_RE.match(qs_until):
+                    return _send_json(self, {"error": "invalid until — expected YYYY-MM-DD"}, 400)
                 events = scan_sessions(cfg["sessions_dir"])
-                if path == "/api/week":
-                    since, until = _week_bounds()
-                else:
-                    since, until = _today_bounds()
+                def_bounds = _week_bounds() if path == "/api/week" else _today_bounds()
+                # Priority: query string > hardcoded default (config since/until removed at dashboard startup)
+                since = qs_since if qs_since else def_bounds[0]
+                until = qs_until if qs_until else def_bounds[1]
                 result = _aggregate(events, since, until, pricing, cfg)
                 result["config"] = {
                     "credits_per_dollar": cfg["credits_per_dollar"],

@@ -150,6 +150,17 @@ button, select {
 }
 button:hover, select:hover { border-color: var(--border-2); }
 
+/* overview filter controls */
+.filter-row.controls { flex-wrap: wrap; gap: 6px; }
+.filter-row.controls button.preset-btn {
+  background: var(--panel-2); color: var(--accent);
+  border-color: var(--accent); font-size: 12px; font-weight: 500;
+  white-space: nowrap;
+}
+.filter-row.controls button.preset-btn:hover {
+  background: rgba(74,158,255,0.12);
+}
+
 .muted { color: var(--muted); }
 .flex  { display: flex; align-items: center; gap: 8px; }
 .spacer { flex: 1; }

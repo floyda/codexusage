@@ -12,9 +12,9 @@ const fmt = {
   modelBadge(m) {
     const s = (m || '').toLowerCase();
     let cls = '';
-    if (s.includes('gpt-5') || s.includes('gpt5'))         cls = 'gpt5';
+    if (s.includes('gpt-5') || s.includes('gpt5'))              cls = 'gpt5';
     else if (s.includes('gpt-4o-mini') || s.includes('4o-mini')) cls = 'gpt4o-mini';
-    else if (s.includes('gpt-4o') || s.includes('4o'))     cls = 'gpt4o';
+    else if (s.includes('gpt-4o') || s.includes('4o'))           cls = 'gpt4o';
     else if (s.match(/^o\d/) || s.includes('/o4') || s.includes('/o3') || s.includes('/o1')) cls = 'o-series';
     const label = (m || '').replace(/^(openai|azure|openrouter\/openai|openrouter)\//i, '');
     return `<span class="badge ${cls}">${label}</span>`;
@@ -28,16 +28,19 @@ async function api(path) {
 }
 
 // ── Pool bar ──────────────────────────────────────────────────────────────────
-function renderPool(pool) {
+function renderPool(pool, rangeLabel) {
   const pct = Math.min(pool.pct ?? 0, 100);
   const fillClass = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
+  const isDefaultWeek = !rangeLabel || rangeLabel === 'this week';
+  const title = isDefaultWeek ? 'Weekly Credit Pool' : `Credits — ${rangeLabel}`;
   const d = new Date();
-  const daysLeft = 7 - d.getDay() || 7;  // days until next Monday
+  const daysLeft = 7 - d.getDay() || 7;
+  const meta = isDefaultWeek ? `resets Monday · ${daysLeft} day${daysLeft !== 1 ? 's' : ''} left` : '';
   return `
     <div class="card pool-card">
       <div class="pool-header">
-        <h2>Weekly Credit Pool</h2>
-        <span class="pool-meta">resets Monday · ${daysLeft} day${daysLeft !== 1 ? 's' : ''} left</span>
+        <h2>${title}</h2>
+        ${meta ? `<span class="pool-meta">${meta}</span>` : ''}
       </div>
       <div class="pool-numbers">
         <span class="pool-used">${fmt.cr(pool.used)}</span>
@@ -72,14 +75,13 @@ function renderKPIs(totals) {
 
 // ── Daily chart (ECharts) ─────────────────────────────────────────────────────
 function renderChart(days) {
-  const dates   = days.map(d => d.date);
-  const input   = days.map(d => +(d.credits * (d.input_tokens   / Math.max(d.total_tokens, 1))).toFixed(4));
-  const cached  = days.map(d => +(d.credits * (d.cached_tokens  / Math.max(d.total_tokens, 1))).toFixed(4));
-  const output  = days.map(d => +(d.credits * (d.output_tokens  / Math.max(d.total_tokens, 1))).toFixed(4));
+  const dates  = days.map(d => d.date);
+  const input  = days.map(d => +(d.credits * (d.input_tokens  / Math.max(d.total_tokens, 1))).toFixed(4));
+  const cached = days.map(d => +(d.credits * (d.cached_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
+  const output = days.map(d => +(d.credits * (d.output_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
 
   const el = $('#daily-chart');
   if (!el) return;
-  // Dispose any existing instance attached to a now-replaced DOM node
   const existing = echarts.getInstanceByDom(el);
   if (existing) existing.dispose();
   const _chart = echarts.init(el, null, { renderer: 'canvas' });
@@ -157,21 +159,76 @@ const ROUTES = {
 };
 
 let _lastData = null;
+// Module-level range state — preserved across re-renders so user selections survive innerHTML replacement.
+let _since = null;
+let _until = null;
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
+// Always use local calendar date, never toISOString() which returns UTC and
+// diverges from local date in non-UTC timezones.
+function localDate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function todayLabel()    { return localDate(new Date()); }
+function tomorrowLabel() { const d = new Date(); return localDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)); }
+function weekLabel() {
+  const d = new Date();
+  // (d.getDay() + 6) % 7 gives 0 for Monday … 6 for Sunday, matching Python's weekday()
+  const offset = (d.getDay() + 6) % 7;
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - offset);
+  const nextMon = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 7);
+  return { since: localDate(monday), until: localDate(nextMon) };
+}
+
+// ── Overview ──────────────────────────────────────────────────────────────────
+function buildOverviewControls() {
+  const sinceVal = _since || weekLabel().since;
+  const untilVal = _until || tomorrowLabel();
+  return `
+    <div class="filter-row controls">
+      <label>From <input type="date" id="since-input" value="${sinceVal}"></label>
+      <label>To   <input type="date" id="until-input" value="${untilVal}"></label>
+      <button class="preset-btn" data-mode="week">This week</button>
+      <button class="preset-btn" data-days="14">2 weeks</button>
+      <button class="preset-btn" data-days="21">3 weeks</button>
+      <button id="apply-btn">Apply</button>
+    </div>`;
+}
 
 async function renderOverview(app) {
+  // Build the URL from state before touching the DOM — inputs live inside app.
+  let url = '/api/week';
+  if (_since) {
+    url += '?since=' + _since;
+    if (_until) url += '&until=' + _until;
+  }
+
   app.innerHTML = '<p class="muted" style="padding:20px">Loading…</p>';
   try {
-    _lastData = await api('/api/week');
+    _lastData = await api(url);
   } catch (e) {
     app.innerHTML = `<p style="color:var(--bad);padding:20px">Error: ${e.message}</p>`;
     return;
   }
-  const { pool, totals, days, models, sessions } = _lastData;
+
+  const { pool, totals, days, models, sessions, range } = _lastData;
+  // Sync state to what the server actually used (respects config/default overrides).
+  _since = range.since;
+  _until = range.until;
+
+  const wk = weekLabel();
+  const label = (range.since === todayLabel()  && range.until === tomorrowLabel())
+    ? 'today'
+    : (range.since === wk.since && range.until === wk.until)
+      ? 'this week'
+      : `${range.since} .. ${range.until}`;
+
   app.innerHTML = `
-    ${renderPool(pool)}
+    ${buildOverviewControls()}
+    ${renderPool(pool, label)}
     ${renderKPIs(totals)}
     <div class="card">
-      <h2>Daily breakdown (this week)</h2>
+      <h2>Daily breakdown (${label})</h2>
       <div class="chart-box" id="daily-chart"></div>
     </div>
     <div class="card">
@@ -179,23 +236,25 @@ async function renderOverview(app) {
       ${renderModels(models)}
     </div>
     <div class="card">
-      <h2>This week's sessions</h2>
+      <h2>Sessions (${label})</h2>
       ${renderSessionsTable(sessions.slice(0, 20))}
     </div>`;
   renderChart(days);
+  // Re-attach listeners since the controls were just re-rendered into fresh DOM.
+  initOverviewControls();
 }
 
 async function renderSessionsRoute(app) {
   const d = new Date();
-  const today = d.toISOString().slice(0, 10);
-  const weekAgo = new Date(d - 7 * 86400000).toISOString().slice(0, 10);
+  const today   = localDate(d);
+  const weekAgo = localDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7));
 
   app.innerHTML = `
     <div class="card">
       <h2>Sessions</h2>
       <div class="filter-row">
         <label>From <input type="date" id="since-input" value="${weekAgo}"></label>
-        <label>To <input type="date" id="until-input" value="${today}"></label>
+        <label>To   <input type="date" id="until-input" value="${today}"></label>
         <button id="filter-btn">Apply</button>
       </div>
       <div id="sessions-table"><p class="muted">Loading…</p></div>
@@ -232,6 +291,36 @@ function buildTopbar() {
 
 function setActiveTab(routeKey) {
   $$('header.topbar nav a').forEach(a => a.classList.toggle('active', a.dataset.route === routeKey));
+}
+
+// Wire up the Apply button and preset buttons on the overview controls.
+// Mutates _since/_until state and calls renderOverview directly (no hash dance).
+function initOverviewControls() {
+  const applyBtn = $('#apply-btn');
+  if (applyBtn) {
+    applyBtn.addEventListener('click', () => {
+      _since = $('#since-input').value || null;
+      _until = $('#until-input').value || null;
+      renderOverview($('#app'));
+    });
+  }
+  $$('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const d = new Date();
+      if (btn.dataset.mode === 'week') {
+        // Full calendar week Mon–Sun, matching the server's default /api/week range.
+        const wk = weekLabel();
+        _since = wk.since;
+        _until = wk.until;
+      } else {
+        const days = parseInt(btn.dataset.days, 10);
+        _since = localDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (days - 1)));
+        // until = tomorrow so today's events are included (API uses < until).
+        _until = tomorrowLabel();
+      }
+      renderOverview($('#app'));
+    });
+  });
 }
 
 async function route() {
