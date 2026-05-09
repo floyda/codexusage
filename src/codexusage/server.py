@@ -71,6 +71,18 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
         d["usd"]     = round(d["usd"], 4)
         d["credits"] = round(d["credits"], 4)
 
+    # Fill in zero-value entries for every calendar day in [since, until) so
+    # the chart always spans the full requested range, not just days with events.
+    since_date = date.fromisoformat(since[:10])
+    until_date = date.fromisoformat(until[:10])
+    cursor = since_date
+    while cursor < until_date:
+        key = cursor.isoformat()
+        if key not in days_map:
+            days_map[key] = {"date": key, "input_tokens": 0, "cached_tokens": 0,
+                             "output_tokens": 0, "total_tokens": 0, "usd": 0.0, "credits": 0.0}
+        cursor += timedelta(days=1)
+
     days = sorted(days_map.values(), key=lambda x: x["date"])
 
     # Per-model (track which projects each model appears in)
