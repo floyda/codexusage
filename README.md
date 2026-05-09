@@ -8,32 +8,66 @@ A web dashboard and CLI tool for tracking OpenAI Codex CLI token usage with ente
 - **Credit Pool Management**: Track usage against configurable weekly credit allocations
 - **Interactive Dashboard**: Visualize usage patterns over time with an interactive web interface
 - **CLI Commands**: Quick access to usage summaries from the terminal
-- **Flexible Billing**: Configure custom credit pools and dollar-to-credit conversion rates
+- **Multi-Project Support**: Track OAuth and API-token projects separately with different billing modes
+
+## Screenshots
+
+### CLI Summary
+
+```
+codexusage week
+
+Codex Usage — week of 2025-05-02
+------------------------------------------------------------
+  Model                      Tokens           USD    Credits
+  ---------------------- ------------ --------- ----------
+  gpt-5                     234,567    $0.7248     18.12 cr
+  o4-mini                    98,432    $0.2184      5.46 cr
+  ---------------------- ------------ --------- ----------
+  Total                     333,099    $0.9432     23.58 cr
+
+  Pool: [██░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 23.58 / 2500 cr (0.9%)
+```
+
+### Web Dashboard
+
+<!-- TODO: add screenshot of the web dashboard (codexusage dashboard) -->
+> Run `codexusage dashboard` and take a screenshot, then replace this line with `![Dashboard](docs/screenshot-dashboard.png)`.
 
 ## Installation
 
+### pipx (recommended for a global CLI tool)
+
 ```bash
-pip install .
+pipx install git+https://github.com/andyfloyd86/codexusage.git
 ```
 
-This installs the `codexusage` command globally.
+### uv
+
+```bash
+uv tool install git+https://github.com/andyfloyd86/codexusage.git
+```
+
+### pip
+
+```bash
+pip install git+https://github.com/andyfloyd86/codexusage.git
+```
 
 ## Quick Start
 
-### 1. Configure the tool
+### 1. Initialise config
 
 ```bash
-codexusage config set \
-  --sessions-dir ~/.codex/sessions \
-  --weekly-pool 2500 \
-  --credits-per-dollar 25
+codexusage config init
 ```
 
-**Configuration options:**
-- `--sessions-dir`: Path to your Codex sessions directory (auto-detected from `~/.codex/sessions` or `$CODEX_HOME/sessions`)
-- `--weekly-pool`: Weekly credit pool (default: 2500)
-- `--credits-per-dollar`: How many credits per $1 of usage (default: 25)
-- `--port`: Dashboard port (default: 8080)
+This writes `~/.config/codexusage/config.json` with auto-detected defaults. Then
+customise as needed:
+
+```bash
+codexusage config set --weekly-pool 2500 --credits-per-dollar 25
+```
 
 ### 2. View today's usage
 
@@ -41,21 +75,12 @@ codexusage config set \
 codexusage today
 ```
 
-Shows a summary table with token counts, USD cost, and credit usage for each model.
-
 ### 3. View weekly usage
 
 ```bash
-codexusage week
+codexusage week          # current billing week (Fri 17:00 → Fri 17:00)
+codexusage week --weeks 4   # last 4 weeks
 ```
-
-Shows usage for the current billing week (Friday 17:00 reset).
-
-```bash
-codexusage week --weeks 4
-```
-
-Show the last 4 weeks of usage.
 
 ### 4. Start the dashboard
 
@@ -63,11 +88,7 @@ Show the last 4 weeks of usage.
 codexusage dashboard
 ```
 
-Starts a local web server and opens the interactive dashboard in your browser. The dashboard shows:
-- Real-time token and credit usage charts
-- Weekly and daily breakdowns
-- Model-specific usage patterns
-- Credit pool utilization
+Opens `http://localhost:8080` automatically. Press `Ctrl-C` to stop.
 
 ## Commands
 
@@ -75,129 +96,142 @@ Starts a local web server and opens the interactive dashboard in your browser. T
 
 Print today's token and credit summary, or a custom date range.
 
-**Examples:**
 ```bash
-codexusage today                              # Today's usage
-codexusage today --since 2025-01-01           # From Jan 1 to today
-codexusage today --since 2025-01-01 --until 2025-02-01  # Custom range
+codexusage today
+codexusage today --since 2025-01-01 --until 2025-02-01
 ```
 
 ### `codexusage week [--weeks N] [--since YYYY-MM-DD] [--until YYYY-MM-DD]`
 
-Print weekly summary (billing week: Friday 17:00 to next Friday 17:00).
+Print weekly summary. Billing week resets every Friday at 17:00.
 
-**Examples:**
 ```bash
-codexusage week              # Current week
-codexusage week --weeks 4    # Last 4 weeks
-codexusage week --since 2025-01-01 --until 2025-02-01  # Custom range
+codexusage week
+codexusage week --weeks 4
+codexusage week --since 2025-01-01 --until 2025-02-01
 ```
 
 ### `codexusage dashboard [--port PORT] [--no-open]`
 
-Start the interactive dashboard.
+Start the interactive web dashboard.
 
-**Options:**
-- `--port`: Override configured port
-- `--no-open`: Don't automatically open in browser
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--port` | 8080 | Override the configured port |
+| `--no-open` | false | Don't open the browser automatically |
+
+### `codexusage config init [--force]`
+
+Write a default config file to `~/.config/codexusage/config.json`.
 
 ### `codexusage config set [OPTIONS]`
 
-Update configuration.
+| Option | Description |
+|--------|-------------|
+| `--sessions-dir PATH` | Path to Codex sessions directory |
+| `--weekly-pool N` | Weekly credit pool size |
+| `--credits-per-dollar N` | Credits per $1 of token spend |
+| `--port N` | Dashboard port |
 
-**Options:**
-- `--sessions-dir PATH`: Path to Codex sessions directory
-- `--weekly-pool AMOUNT`: Weekly credit pool
-- `--credits-per-dollar RATE`: Credit conversion rate
-- `--port PORT`: Dashboard port
+### `codexusage config project add/list/remove`
+
+Manage multiple projects (useful when you have both OAuth and API-token workspaces):
+
+```bash
+# OAuth project (usage counts against your weekly credit pool)
+codexusage config project add --name work --home ~/.codex --auth-type oauth
+
+# API-token project (billed in USD, shown separately)
+codexusage config project add --name personal --home ~/personal/.codex --auth-type api_token
+
+codexusage config project list
+codexusage config project remove --name personal
+```
 
 ## Configuration File
 
-Configuration is stored in `~/.config/codexusage/config.json`:
+`~/.config/codexusage/config.json`:
 
 ```json
 {
-  "sessions_dir": "~/.codex/sessions",
   "weekly_pool_credits": 2500,
   "credits_per_dollar": 25,
-  "port": 8080
+  "sessions_dir": "~/.codex/sessions",
+  "port": 8080,
+  "projects": [
+    {"name": "default", "sessions_dir": "~/.codex/sessions", "auth_type": "oauth"}
+  ]
 }
 ```
 
-You can edit this file directly or use `codexusage config set`.
+## Development
+
+Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
+
+```bash
+git clone https://github.com/andyfloyd86/codexusage.git
+cd codexusage
+
+uv sync --group dev        # create .venv and install all deps
+uv run codexusage --help   # run from the local checkout
+
+uv run pytest              # tests
+uv run ruff check src tests   # lint
+uv run ruff format src tests  # format
+uv run mypy src/codexusage    # type-check
+```
+
+CI runs lint + type-check + tests on every push via GitHub Actions (`.github/workflows/ci.yml`).
 
 ## How It Works
 
-1. **Session Scanning**: The tool scans your Codex sessions directory for usage logs
-2. **Token Counting**: Aggregates tokens by model and date
-3. **USD Conversion**: Uses current OpenAI pricing to calculate costs
-4. **Credit Conversion**: Converts USD cost to credits using your configured rate
-5. **Visualization**: Displays usage against your weekly credit pool
-
-## Output Examples
-
-### CLI Summary
-
-```
-Codex Usage — today
-────────────────────────────────────────────────────────
-  Model                Tokens       USD     Credits
-  ────────────────────────────────────────────────────────
-  gpt-4               234,567    $12.34      308.50 cr
-  gpt-3.5-turbo       123,456     $1.23       30.75 cr
-  ────────────────────────────────────────────────────────
-  Total               357,023    $13.57      339.25 cr
-
-  Pool: [████████░░░░░░░░░░░░░░░░░░] 339.25 / 2500.00 cr (13.6%)
-```
-
-### Dashboard
-
-The web dashboard provides:
-- Line charts showing token/credit usage over time
-- Bar charts comparing models
-- Pool utilization gauge
-- Filterable date ranges
-- Hourly granularity for detailed analysis
-
-## Requirements
-
-- Python 3.9+
-- Codex CLI installed with session history
-- No external dependencies (pure Python)
+1. **Session Scanning**: Parses Codex JSONL session logs in `sessions_dir`
+2. **Token Counting**: Aggregates tokens by model, day, and project
+3. **USD Conversion**: Uses bundled OpenAI pricing (`pricing.json`) to calculate cost
+4. **Credit Conversion**: Converts USD → credits using your configured `credits_per_dollar` rate
+5. **Visualization**: Dashboard renders per-day charts, model breakdowns, and pool utilization
 
 ## Troubleshooting
 
-### "sessions_dir not found"
-Ensure your Codex sessions directory exists and is correctly configured. Default paths are:
-- `~/.codex/sessions` (if `CODEX_HOME` not set)
-- `$CODEX_HOME/sessions` (if `CODEX_HOME` is set)
+**`sessions_dir not found`** — Check the path:
+```bash
+codexusage config set --sessions-dir ~/.codex/sessions
+```
 
-### No usage data showing
-1. Verify Codex CLI has been used (sessions exist)
-2. Check `--sessions-dir` points to the correct directory
-3. Try `codexusage config set --sessions-dir /path/to/sessions`
+**No usage data showing** — Verify Codex CLI has been used and session files exist:
+```bash
+ls ~/.codex/sessions/
+```
 
-### Dashboard won't open
-- Port may be in use. Try: `codexusage dashboard --port 9000`
-- Check firewall allows localhost connections
+**Dashboard port in use** — Use a different port:
+```bash
+codexusage dashboard --port 9090
+```
+
+## Requirements
+
+- Python 3.10+
+- Codex CLI installed and used at least once
+- No external Python dependencies (stdlib only)
 
 ## Project Structure
 
 ```
 codexusage/
 ├── src/codexusage/
-│   ├── cli.py          # CLI entry point and commands
-│   ├── server.py       # Web dashboard server
-│   ├── scanner.py      # Session log scanner
-│   ├── pricing.py      # Token-to-USD conversion
-│   ├── config.py       # Configuration management
-│   ├── pricing.json    # OpenAI pricing data
-│   └── web/            # Dashboard HTML/CSS/JS
-├── scripts/            # Utilities (test data generation)
-└── pyproject.toml      # Project metadata
+│   ├── cli.py          # CLI entry point and argument parsing
+│   ├── server.py       # HTTP server for the web dashboard
+│   ├── scanner.py      # JSONL session log parser
+│   ├── pricing.py      # Token → USD conversion
+│   ├── config.py       # Config file management
+│   ├── pricing.json    # Bundled OpenAI pricing data
+│   └── web/            # Dashboard HTML/CSS/JS (ECharts)
+├── tests/              # pytest test suite
+├── scripts/            # Dev utilities (test data generation)
+├── .github/workflows/  # CI (lint, type-check, test)
+└── pyproject.toml      # Build metadata and tool config
 ```
 
 ## License
 
-Internal tool.
+MIT
