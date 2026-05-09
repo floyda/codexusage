@@ -77,6 +77,28 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
         d["usd"] = round(d["usd"], 4)
         d["credits"] = round(d["credits"], 4)
 
+    # Per-day-per-model and per-day-per-project breakdowns for chart drill-down
+    days_model_map: dict[str, dict[str, dict]] = {}
+    days_project_map: dict[str, dict[str, dict]] = {}
+    for e in filtered:
+        day = e["timestamp"][:10]
+        m = e["model"]
+        proj = e.get("project", "default")
+        usd = tokens_to_usd(m, e, pricing)
+        credits = usd_to_credits(usd, cpd) if e.get("auth_type", "oauth") == "oauth" else 0.0
+        for mapping, key in ((days_model_map, m), (days_project_map, proj)):
+            if key not in mapping:
+                mapping[key] = {}
+            if day not in mapping[key]:
+                mapping[key][day] = {"usd": 0.0, "credits": 0.0}
+            mapping[key][day]["usd"] += usd
+            mapping[key][day]["credits"] += credits
+    for mapping in (days_model_map, days_project_map):
+        for key_data in mapping.values():
+            for v in key_data.values():
+                v["usd"] = round(v["usd"], 4)
+                v["credits"] = round(v["credits"], 4)
+
     # Fill in zero-value entries for every calendar day in [since, until) so
     # the chart always spans the full requested range, not just days with events.
     since_date = date.fromisoformat(since[:10])
@@ -234,6 +256,8 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
 
     return {
         "days": days,
+        "days_by_model": days_model_map,
+        "days_by_project": days_project_map,
         "models": models,
         "sessions": sessions,
         "projects": projects_list,

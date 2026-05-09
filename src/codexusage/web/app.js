@@ -40,16 +40,26 @@ function applyProjectFilter(data) {
   const proj = (data.config?.projects || []).find(p => p.name === _activeProject);
   const isApiToken = proj?.auth_type === 'api_token';
   const projUsd = (data.projects || []).find(p => p.name === _activeProject)?.usd ?? 0;
+  const filteredModels = data.models.filter(m => (m.projects || []).includes(_activeProject));
+  const modelKeys = new Set(filteredModels.map(m => m.model));
+  const filteredDaysByModel = Object.fromEntries(
+    Object.entries(data.days_by_model || {}).filter(([k]) => modelKeys.has(k))
+  );
+  const filteredDaysByProject = Object.fromEntries(
+    Object.entries(data.days_by_project || {}).filter(([k]) => k === _activeProject)
+  );
   return {
     ...data,
-    models:          data.models.filter(m => (m.projects || []).includes(_activeProject)),
-    sessions:        data.sessions.filter(s => s.project === _activeProject),
-    projects:        (data.projects || []).filter(p => p.name === _activeProject),
-    effort_levels:   [],
-    has_effort_data: false,
-    has_oauth:       isApiToken ? false : data.has_oauth,
-    has_api_token:   isApiToken,
+    models:           filteredModels,
+    sessions:         data.sessions.filter(s => s.project === _activeProject),
+    projects:         (data.projects || []).filter(p => p.name === _activeProject),
+    effort_levels:    [],
+    has_effort_data:  false,
+    has_oauth:        isApiToken ? false : data.has_oauth,
+    has_api_token:    isApiToken,
     api_token_totals: isApiToken ? { usd: projUsd } : data.api_token_totals,
+    days_by_model:    filteredDaysByModel,
+    days_by_project:  filteredDaysByProject,
   };
 }
 
@@ -152,17 +162,45 @@ function renderKPIs(totals, hasOauth) {
 }
 
 // ── Daily chart (ECharts) ─────────────────────────────────────────────────────
-function renderChart(days, hasOauth, hasApiToken) {
-  // Pure OAuth: show credits (existing behaviour). Mixed or pure API token: show USD.
-  const useCredits = hasOauth && !hasApiToken;
-  const getMetric  = d => useCredits ? d.credits : d.usd;
-  const fmtVal     = v => useCredits ? v.toFixed(4) + ' cr' : '$' + v.toFixed(4);
-  const fmtAxis    = v => useCredits ? v.toFixed(2) : '$' + v.toFixed(4);
+let _chartBreakdown = 'token-type';
 
-  const dates  = days.map(d => d.date);
-  const input  = days.map(d => +(getMetric(d) * (d.input_tokens  / Math.max(d.total_tokens, 1))).toFixed(4));
-  const cached = days.map(d => +(getMetric(d) * (d.cached_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
-  const output = days.map(d => +(getMetric(d) * (d.output_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
+const CHART_PALETTE = [
+  '#4A9EFF', '#3FB68B', '#FF6B6B', '#FFB347', '#9B59B6',
+  '#1ABC9C', '#E74C3C', '#F39C12', '#2ECC71', '#E67E22',
+  '#3498DB', '#D35400', '#8E44AD', '#16A085', '#C0392B',
+];
+
+function renderChart(days, hasOauth, hasApiToken, daysByModel, daysByProject) {
+  const useCredits = hasOauth && !hasApiToken;
+  const fmtVal  = v => useCredits ? v.toFixed(4) + ' cr' : '$' + v.toFixed(4);
+  const fmtAxis = v => useCredits ? v.toFixed(2) : '$' + v.toFixed(4);
+  const metric  = useCredits ? 'credits' : 'usd';
+
+  const dates = days.map(d => d.date);
+  let series;
+
+  if (_chartBreakdown === 'token-type') {
+    const getM  = d => useCredits ? d.credits : d.usd;
+    const input  = days.map(d => +(getM(d) * (d.input_tokens  / Math.max(d.total_tokens, 1))).toFixed(4));
+    const cached = days.map(d => +(getM(d) * (d.cached_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
+    const output = days.map(d => +(getM(d) * (d.output_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
+    series = [
+      { name: 'Input',  type: 'bar', stack: 'total', data: input,  itemStyle: { color: '#4A9EFF' } },
+      { name: 'Cached', type: 'bar', stack: 'total', data: cached, itemStyle: { color: '#2A5A99' } },
+      { name: 'Output', type: 'bar', stack: 'total', data: output, itemStyle: { color: '#3FB68B' } },
+    ];
+  } else {
+    const source = _chartBreakdown === 'by-model' ? daysByModel : daysByProject;
+    const keys = Object.keys(source || {}).sort();
+    const stripPrefix = k => k.replace(/^(openai|azure|openrouter\/openai|openrouter)\//i, '');
+    series = keys.map((key, i) => ({
+      name: _chartBreakdown === 'by-model' ? stripPrefix(key) : key,
+      type: 'bar',
+      stack: 'total',
+      data: dates.map(date => +((source[key][date]?.[metric] ?? 0).toFixed(4))),
+      itemStyle: { color: CHART_PALETTE[i % CHART_PALETTE.length] },
+    }));
+  }
 
   const el = $('#daily-chart');
   if (!el) return;
@@ -178,18 +216,15 @@ function renderChart(days, hasOauth, hasApiToken) {
       backgroundColor: '#131922', borderColor: '#1F2630',
       textStyle: { color: '#E6EDF3', fontSize: 12 },
       formatter: params => {
+        const nonZero = params.filter(p => p.value > 0);
         const total = params.reduce((s, p) => s + p.value, 0);
-        const rows = params.map(p => `${p.marker} ${p.seriesName}: ${fmtVal(p.value)}`).join('<br>');
+        const rows = nonZero.map(p => `${p.marker} ${p.seriesName}: ${fmtVal(p.value)}`).join('<br>');
         return `${params[0].name}<br>${rows}<br><b>Total: ${fmtVal(total)}</b>`;
       },
     },
     xAxis: { type: 'category', data: dates, axisLabel: { color: '#8B98A6', fontSize: 11 }, axisLine: { lineStyle: { color: '#1F2630' } } },
     yAxis: { type: 'value', axisLabel: { color: '#8B98A6', fontSize: 11, formatter: fmtAxis }, splitLine: { lineStyle: { color: '#1F2630' } } },
-    series: [
-      { name: 'Input',  type: 'bar', stack: 'total', data: input,  itemStyle: { color: '#4A9EFF' } },
-      { name: 'Cached', type: 'bar', stack: 'total', data: cached, itemStyle: { color: '#2A5A99' } },
-      { name: 'Output', type: 'bar', stack: 'total', data: output, itemStyle: { color: '#3FB68B' } },
-    ],
+    series,
   });
 }
 
@@ -343,6 +378,16 @@ function splitDT(dt) {
   return i === -1 ? [dt, '00:00'] : [dt.slice(0, i), dt.slice(i + 1, i + 6)];
 }
 
+// ── Chart toggle ─────────────────────────────────────────────────────────────
+function initChartToggles(app, days, hasOauth, hasApiToken, daysByModel, daysByProject, cfgProjects) {
+  $$('.toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _chartBreakdown = btn.dataset.breakdown;
+      _paintOverview(app, cfgProjects);
+    });
+  });
+}
+
 // ── Overview ──────────────────────────────────────────────────────────────────
 function buildOverviewControls() {
   const wk = weekLabel();
@@ -373,7 +418,8 @@ function _paintOverview(app, cfgProjects) {
   const filtered = applyProjectFilter(_lastData);
   const { pool, totals, days, models, sessions, range,
           projects, effort_levels, api_token_totals,
-          has_oauth, has_api_token, has_effort_data } = filtered;
+          has_oauth, has_api_token, has_effort_data,
+          days_by_model, days_by_project } = filtered;
 
   const wk = weekLabel();
   const fmtDT = s => s ? s.replace('T', ' ') : s;
@@ -388,7 +434,14 @@ function _paintOverview(app, cfgProjects) {
     ${renderKPIs(totals, has_oauth)}
     ${has_api_token ? renderApiTokenCard(api_token_totals, filtered.projects) : ''}
     <div class="card">
-      <h2>Daily breakdown (${label})</h2>
+      <div class="chart-header">
+        <h2>Daily breakdown (${label})</h2>
+        <div class="chart-toggle">
+          <button class="toggle-btn${_chartBreakdown === 'token-type' ? ' active' : ''}" data-breakdown="token-type">Token type</button>
+          <button class="toggle-btn${_chartBreakdown === 'by-model'   ? ' active' : ''}" data-breakdown="by-model">By model</button>
+          ${multiProject ? `<button class="toggle-btn${_chartBreakdown === 'by-project' ? ' active' : ''}" data-breakdown="by-project">By project</button>` : ''}
+        </div>
+      </div>
       <div class="chart-box" id="daily-chart"></div>
     </div>
     ${multiProject ? `<div class="card"><h2>By project</h2>${renderProjectsTable(filtered.projects, has_oauth)}</div>` : ''}
@@ -402,8 +455,9 @@ function _paintOverview(app, cfgProjects) {
       ${renderSessionsTable(filtered.sessions.slice(0, 20))}
     </div>`;
 
-  renderChart(days, has_oauth, has_api_token);
+  renderChart(days, has_oauth, has_api_token, days_by_model, days_by_project);
   initOverviewControls();
+  initChartToggles(app, days, has_oauth, has_api_token, days_by_model, days_by_project, cfgProjects);
   if (multiProject) initProjectPills(app, cfgProjects);
 }
 

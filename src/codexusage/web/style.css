@@ -143,6 +143,17 @@ td.mono { font-family: var(--mono); color: var(--muted); font-size: 12px; }
 
 /* chart */
 .chart-box { height: 200px; }
+.chart-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.chart-header h2 { margin: 0; }
+.chart-toggle { display: flex; gap: 4px; }
+.toggle-btn {
+  background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 10px; font-size: 12px; font-weight: 500; cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.toggle-btn:hover { color: var(--text); border-color: var(--border-2); }
+.toggle-btn.active { color: var(--text); background: rgba(74,158,255,0.12); border-color: var(--accent); }
 
 /* sessions tab */
 .filter-row { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
