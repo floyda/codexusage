@@ -2,8 +2,13 @@
 name = "codexusage"
 version = "0.1.0"
 description = "Web dashboard for OpenAI Codex CLI token usage with enterprise credit tracking"
-requires-python = ">=3.9"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
 dependencies = []
+
+[project.urls]
+Repository = "https://github.com/andyfloyd/codexusage"
 
 [project.scripts]
 codexusage = "codexusage.cli:main"
@@ -17,3 +22,30 @@ packages = ["src/codexusage"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src/codexusage" = "codexusage"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.9",
+    "mypy>=1.10",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+warn_unused_ignores = true
+check_untyped_defs = true
+ignore_missing_imports = true
