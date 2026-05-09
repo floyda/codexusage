@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from codexusage.pricing import _rates_for, load_pricing, tokens_to_usd, usd_to_credits
+from codexusage.pricing import _load_bundled, _rates_for, tokens_to_usd, usd_to_credits
 
 
 @pytest.fixture(scope="module")
 def pricing() -> dict:
-    return load_pricing()
+    # Use the bundled snapshot so tests are deterministic regardless of network
+    return _load_bundled()
 
 
 def _event(input: int = 0, cached: int = 0, output: int = 0) -> dict:

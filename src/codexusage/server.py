@@ -314,6 +314,8 @@ def build_handler(cfg: dict):
                     "credits_per_dollar": cfg["credits_per_dollar"],
                     "weekly_pool_credits": cfg["weekly_pool_credits"],
                     "projects": cfg["projects"],
+                    "pricing_source": "live" if "_fetched_at" in pricing else "bundled",
+                    "pricing_fetched_at": pricing.get("_fetched_at"),
                 }
                 return _send_json(self, result)
 

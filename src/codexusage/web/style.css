@@ -54,6 +54,17 @@ header.topbar {
 .topbar nav a.active { color: var(--text); background: var(--panel-2); }
 .topbar .spacer { margin-left: auto; }
 
+.pricing-status {
+  font-size: 11px; font-family: var(--mono); color: var(--muted-2);
+  display: flex; align-items: center; gap: 5px;
+}
+.pricing-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  flex-shrink: 0;
+}
+.pricing-dot.live    { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.pricing-dot.bundled { background: var(--muted-2); }
+
 button.refresh-btn {
   background: var(--panel-2); color: var(--muted);
   border: 1px solid var(--border); border-radius: 6px;

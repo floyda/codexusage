@@ -418,6 +418,7 @@ async function renderOverview(app) {
   app.innerHTML = '<p class="muted" style="padding:20px">Loading…</p>';
   try {
     _lastData = await api(url);
+    updatePricingStatus(_lastData.config);
   } catch (e) {
     app.innerHTML = `<p style="color:var(--bad);padding:20px">Error: ${e.message}</p>`;
     return;
@@ -471,8 +472,25 @@ function buildTopbar() {
       ${Object.keys(ROUTES).map(r => `<a href="#${r}" data-route="${r}">${r.slice(1)}</a>`).join('')}
     </nav>
     <div class="spacer"></div>
+    <span class="pricing-status" id="pricing-status"></span>
     <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>`;
   document.body.prepend(header);
+}
+
+function updatePricingStatus(config) {
+  const el = document.getElementById('pricing-status');
+  if (!el || !config) return;
+  if (config.pricing_source === 'live' && config.pricing_fetched_at) {
+    const ageMs = Date.now() - config.pricing_fetched_at * 1000;
+    const ageH  = Math.floor(ageMs / 3_600_000);
+    const ageM  = Math.floor((ageMs % 3_600_000) / 60_000);
+    const ago   = ageH > 0 ? `${ageH}h ago` : ageM > 0 ? `${ageM}m ago` : 'just now';
+    el.innerHTML = `<span class="pricing-dot live"></span>Pricing live · ${ago}`;
+    el.title = `Fetched from LiteLLM at ${new Date(config.pricing_fetched_at * 1000).toLocaleString()}`;
+  } else {
+    el.innerHTML = `<span class="pricing-dot bundled"></span>Pricing bundled`;
+    el.title = 'Using built-in pricing snapshot — network unavailable or fetch failed';
+  }
 }
 
 function setActiveTab(routeKey) {
