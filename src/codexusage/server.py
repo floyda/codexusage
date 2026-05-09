@@ -1,23 +1,22 @@
 """Local HTTP server: static web UI + JSON API. Stateless — scans fresh per request."""
+
 from __future__ import annotations
 
 import http.server
 import json
 import mimetypes
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from importlib.resources import files
-from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
-_DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$')
-
-from .config import load_config
 from .pricing import load_pricing, tokens_to_usd, usd_to_credits
 from .scanner import scan_all_projects
 
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$")
 
-def _week_bounds(now: Optional[datetime] = None) -> tuple[str, str]:
+
+def _week_bounds(now: datetime | None = None) -> tuple[str, str]:
     """Return (since, until) for the current Fri-17:00 → Fri-17:00 billing week."""
     dt = now or datetime.now()
     # weekday(): Mon=0 … Fri=4 … Sun=6  →  days since last Friday
@@ -55,20 +54,27 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
     for e in filtered:
         day = e["timestamp"][:10]
         if day not in days_map:
-            days_map[day] = {"date": day, "input_tokens": 0, "cached_tokens": 0,
-                             "output_tokens": 0, "total_tokens": 0, "usd": 0.0, "credits": 0.0}
+            days_map[day] = {
+                "date": day,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "usd": 0.0,
+                "credits": 0.0,
+            }
         d = days_map[day]
-        d["input_tokens"]  += e["input_tokens"]
+        d["input_tokens"] += e["input_tokens"]
         d["cached_tokens"] += e["cached_input_tokens"]
         d["output_tokens"] += e["output_tokens"]
-        d["total_tokens"]  += e["total_tokens"]
+        d["total_tokens"] += e["total_tokens"]
         usd = tokens_to_usd(e["model"], e, pricing)
         d["usd"] += usd
         if e.get("auth_type", "oauth") == "oauth":
             d["credits"] += usd_to_credits(usd, cpd)
 
     for d in days_map.values():
-        d["usd"]     = round(d["usd"], 4)
+        d["usd"] = round(d["usd"], 4)
         d["credits"] = round(d["credits"], 4)
 
     # Fill in zero-value entries for every calendar day in [since, until) so
@@ -79,8 +85,15 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
     while cursor < until_date:
         key = cursor.isoformat()
         if key not in days_map:
-            days_map[key] = {"date": key, "input_tokens": 0, "cached_tokens": 0,
-                             "output_tokens": 0, "total_tokens": 0, "usd": 0.0, "credits": 0.0}
+            days_map[key] = {
+                "date": key,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "usd": 0.0,
+                "credits": 0.0,
+            }
         cursor += timedelta(days=1)
 
     days = sorted(days_map.values(), key=lambda x: x["date"])
@@ -90,15 +103,23 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
     for e in filtered:
         m = e["model"]
         if m not in models_map:
-            models_map[m] = {"model": m, "events": 0, "input_tokens": 0, "cached_tokens": 0,
-                             "output_tokens": 0, "total_tokens": 0, "usd": 0.0, "credits": 0.0,
-                             "_projects": set()}
+            models_map[m] = {
+                "model": m,
+                "events": 0,
+                "input_tokens": 0,
+                "cached_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "usd": 0.0,
+                "credits": 0.0,
+                "_projects": set(),
+            }
         r = models_map[m]
-        r["events"]        += 1
-        r["input_tokens"]  += e["input_tokens"]
+        r["events"] += 1
+        r["input_tokens"] += e["input_tokens"]
         r["cached_tokens"] += e["cached_input_tokens"]
         r["output_tokens"] += e["output_tokens"]
-        r["total_tokens"]  += e["total_tokens"]
+        r["total_tokens"] += e["total_tokens"]
         r["_projects"].add(e.get("project", "default"))
         usd = tokens_to_usd(m, e, pricing)
         r["usd"] += usd
@@ -106,8 +127,8 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
             r["credits"] += usd_to_credits(usd, cpd)
 
     for r in models_map.values():
-        r["usd"]      = round(r["usd"], 4)
-        r["credits"]  = round(r["credits"], 4)
+        r["usd"] = round(r["usd"], 4)
+        r["credits"] = round(r["credits"], 4)
         r["projects"] = sorted(r.pop("_projects"))
 
     models = sorted(models_map.values(), key=lambda x: -x["usd"])
@@ -118,18 +139,18 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
         sid = e["session_id"]
         if sid not in sessions_map:
             sessions_map[sid] = {
-                "session_id":      sid,
-                "date":            e["timestamp"][:10],
-                "last_timestamp":  e["timestamp"],
-                "events":          0,
-                "total_tokens":    0,
-                "usd":             0.0,
-                "credits":         0.0,
-                "project":         e.get("project", "default"),
+                "session_id": sid,
+                "date": e["timestamp"][:10],
+                "last_timestamp": e["timestamp"],
+                "events": 0,
+                "total_tokens": 0,
+                "usd": 0.0,
+                "credits": 0.0,
+                "project": e.get("project", "default"),
                 "reasoning_effort": e.get("reasoning_effort"),
             }
         s = sessions_map[sid]
-        s["events"]       += 1
+        s["events"] += 1
         s["total_tokens"] += e["total_tokens"]
         if e["timestamp"] > s["last_timestamp"]:
             s["last_timestamp"] = e["timestamp"]
@@ -141,7 +162,7 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
             s["reasoning_effort"] = e["reasoning_effort"]
 
     for s in sessions_map.values():
-        s["usd"]     = round(s["usd"], 4)
+        s["usd"] = round(s["usd"], 4)
         s["credits"] = round(s["credits"], 4)
 
     sessions = sorted(sessions_map.values(), key=lambda x: x["last_timestamp"], reverse=True)
@@ -149,15 +170,19 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
     # Per-project
     projects_map: dict[str, dict] = {}
     for e in filtered:
-        pname     = e.get("project", "default")
+        pname = e.get("project", "default")
         auth_type = e.get("auth_type", "oauth")
         if pname not in projects_map:
             projects_map[pname] = {
-                "name": pname, "auth_type": auth_type,
-                "events": 0, "total_tokens": 0, "usd": 0.0, "credits": 0.0,
+                "name": pname,
+                "auth_type": auth_type,
+                "events": 0,
+                "total_tokens": 0,
+                "usd": 0.0,
+                "credits": 0.0,
             }
         r = projects_map[pname]
-        r["events"]       += 1
+        r["events"] += 1
         r["total_tokens"] += e["total_tokens"]
         usd = tokens_to_usd(e["model"], e, pricing)
         r["usd"] += usd
@@ -165,7 +190,7 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
             r["credits"] += usd_to_credits(usd, cpd)
 
     for r in projects_map.values():
-        r["usd"]     = round(r["usd"], 4)
+        r["usd"] = round(r["usd"], 4)
         r["credits"] = round(r["credits"], 4)
 
     projects_list = sorted(projects_map.values(), key=lambda x: x["name"])
@@ -176,10 +201,14 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
         effort_key = e.get("reasoning_effort") or "none"
         if effort_key not in effort_map:
             effort_map[effort_key] = {
-                "effort": effort_key, "events": 0, "total_tokens": 0, "usd": 0.0, "credits": 0.0,
+                "effort": effort_key,
+                "events": 0,
+                "total_tokens": 0,
+                "usd": 0.0,
+                "credits": 0.0,
             }
         r = effort_map[effort_key]
-        r["events"]       += 1
+        r["events"] += 1
         r["total_tokens"] += e["total_tokens"]
         usd = tokens_to_usd(e["model"], e, pricing)
         r["usd"] += usd
@@ -187,41 +216,41 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
             r["credits"] += usd_to_credits(usd, cpd)
 
     for r in effort_map.values():
-        r["usd"]     = round(r["usd"], 4)
+        r["usd"] = round(r["usd"], 4)
         r["credits"] = round(r["credits"], 4)
 
     effort_levels = sorted(effort_map.values(), key=lambda x: _EFFORT_ORDER.get(x["effort"], 99))
 
     # Totals — credits are OAuth-only; USD is all projects
     oauth_credits = sum(r["credits"] for r in projects_map.values() if r["auth_type"] == "oauth")
-    api_token_usd = sum(r["usd"]     for r in projects_map.values() if r["auth_type"] == "api_token")
-    total_usd     = sum(r["usd"]     for r in projects_map.values())
-    total_tokens  = sum(r["total_tokens"] for r in projects_map.values())
-    pool_pct      = round(oauth_credits / pool_limit * 100, 1) if pool_limit > 0 else 0.0
+    api_token_usd = sum(r["usd"] for r in projects_map.values() if r["auth_type"] == "api_token")
+    total_usd = sum(r["usd"] for r in projects_map.values())
+    total_tokens = sum(r["total_tokens"] for r in projects_map.values())
+    pool_pct = round(oauth_credits / pool_limit * 100, 1) if pool_limit > 0 else 0.0
 
-    has_oauth      = any(e.get("auth_type", "oauth") == "oauth"  for e in filtered)
-    has_api_token  = any(e.get("auth_type") == "api_token"        for e in filtered)
-    has_effort_data = any(e.get("reasoning_effort")               for e in filtered)
+    has_oauth = any(e.get("auth_type", "oauth") == "oauth" for e in filtered)
+    has_api_token = any(e.get("auth_type") == "api_token" for e in filtered)
+    has_effort_data = any(e.get("reasoning_effort") for e in filtered)
 
     return {
-        "days":    days,
-        "models":  models,
+        "days": days,
+        "models": models,
         "sessions": sessions,
         "projects": projects_list,
         "effort_levels": effort_levels,
         "totals": {
             "total_tokens": total_tokens,
-            "usd":     round(total_usd, 4),
+            "usd": round(total_usd, 4),
             "credits": round(oauth_credits, 4),
         },
         "pool": {
-            "used":  round(oauth_credits, 4),
+            "used": round(oauth_credits, 4),
             "limit": pool_limit,
-            "pct":   pool_pct,
+            "pct": pool_pct,
         },
         "api_token_totals": {"usd": round(api_token_usd, 4)},
-        "has_oauth":       has_oauth,
-        "has_api_token":   has_api_token,
+        "has_oauth": has_oauth,
+        "has_api_token": has_api_token,
         "has_effort_data": has_effort_data,
         "range": {"since": since, "until": until},
     }
@@ -282,20 +311,16 @@ def build_handler(cfg: dict):
                 until = qs_until if qs_until else def_bounds[1]
                 result = _aggregate(events, since, until, pricing, cfg)
                 result["config"] = {
-                    "credits_per_dollar":  cfg["credits_per_dollar"],
+                    "credits_per_dollar": cfg["credits_per_dollar"],
                     "weekly_pool_credits": cfg["weekly_pool_credits"],
-                    "projects":            cfg["projects"],
+                    "projects": cfg["projects"],
                 }
                 return _send_json(self, result)
 
             if path == "/api/sessions":
-                since = qs.get("since", [None])[0]
-                until = qs.get("until", [None])[0]
+                since = qs.get("since", [None])[0] or "0000-01-01"
+                until = qs.get("until", [None])[0] or "9999-12-31"
                 events = scan_all_projects(cfg["projects"])
-                if not since:
-                    since = "0000-01-01"
-                if not until:
-                    until = "9999-12-31"
                 result = _aggregate(events, since, until, pricing, cfg)
                 return _send_json(self, {"sessions": result["sessions"]})
 

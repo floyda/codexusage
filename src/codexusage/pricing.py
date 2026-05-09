@@ -1,9 +1,9 @@
 """Token → USD → credits conversion using bundled pricing.json."""
+
 from __future__ import annotations
 
 import json
 from importlib.resources import files
-from typing import Optional
 
 
 def load_pricing() -> dict:
@@ -11,12 +11,12 @@ def load_pricing() -> dict:
     return json.loads(data)
 
 
-def _rates_for(model: str, pricing: dict) -> Optional[dict]:
+def _rates_for(model: str, pricing: dict) -> dict | None:
     m = (model or "").lower().strip()
     # Strip common provider prefixes Codex may include
     for prefix in ("openai/", "azure/openai/", "openrouter/openai/", "openrouter/"):
         if m.startswith(prefix):
-            m = m[len(prefix):]
+            m = m[len(prefix) :]
             break
 
     exact = pricing["models"].get(m)

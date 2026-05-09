@@ -3,11 +3,11 @@
 Ports the parsing logic from ccusage/apps/codex/src/data-loader.ts.
 No database — scans files fresh on every call.
 """
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
 
 
 def _ensure_int(value: object) -> int:
@@ -16,25 +16,27 @@ def _ensure_int(value: object) -> int:
     return 0
 
 
-def _normalize_usage(obj: object) -> Optional[dict]:
+def _normalize_usage(obj: object) -> dict | None:
     if not isinstance(obj, dict):
         return None
     return {
-        "input_tokens":             _ensure_int(obj.get("input_tokens")),
-        "cached_input_tokens":      _ensure_int(obj.get("cached_input_tokens") or obj.get("cache_read_input_tokens")),
-        "output_tokens":            _ensure_int(obj.get("output_tokens")),
-        "reasoning_output_tokens":  _ensure_int(obj.get("reasoning_output_tokens")),
-        "total_tokens":             _ensure_int(obj.get("total_tokens")),
+        "input_tokens": _ensure_int(obj.get("input_tokens")),
+        "cached_input_tokens": _ensure_int(
+            obj.get("cached_input_tokens") or obj.get("cache_read_input_tokens")
+        ),
+        "output_tokens": _ensure_int(obj.get("output_tokens")),
+        "reasoning_output_tokens": _ensure_int(obj.get("reasoning_output_tokens")),
+        "total_tokens": _ensure_int(obj.get("total_tokens")),
     }
 
 
-def _subtract_usage(current: dict, previous: Optional[dict]) -> dict:
+def _subtract_usage(current: dict, previous: dict | None) -> dict:
     if previous is None:
         return current
     return {k: max(current[k] - previous.get(k, 0), 0) for k in current}
 
 
-def _extract_model(payload: object) -> Optional[str]:
+def _extract_model(payload: object) -> str | None:
     if not isinstance(payload, dict):
         return None
     for key in ("model", "model_name"):
@@ -60,7 +62,7 @@ def _extract_model(payload: object) -> Optional[str]:
     return None
 
 
-def _extract_effort(payload: object) -> Optional[str]:
+def _extract_effort(payload: object) -> str | None:
     """Extract reasoning effort level (low/medium/high/xhigh) from a payload dict."""
     if not isinstance(payload, dict):
         return None
@@ -82,9 +84,9 @@ _LEGACY_FALLBACK = "gpt-5"
 
 def _parse_file(path: Path, session_id: str) -> list[dict]:
     events: list[dict] = []
-    current_model: Optional[str] = None
-    current_effort: Optional[str] = None
-    previous_totals: Optional[dict] = None
+    current_model: str | None = None
+    current_effort: str | None = None
+    previous_totals: dict | None = None
 
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -126,7 +128,7 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
         last_usage = _normalize_usage(info.get("last_token_usage"))
         total_usage = _normalize_usage(info.get("total_token_usage"))
 
-        raw: Optional[dict] = None
+        raw: dict | None = None
         if last_usage is not None:
             raw = last_usage
         elif total_usage is not None:
@@ -146,20 +148,22 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
             continue
 
         # Model and effort from event payload override session-level context
-        event_model  = _extract_model(payload) or current_model or _LEGACY_FALLBACK
+        event_model = _extract_model(payload) or current_model or _LEGACY_FALLBACK
         event_effort = _extract_effort(payload) or current_effort
 
-        events.append({
-            "session_id":              session_id,
-            "timestamp":               timestamp,
-            "model":                   event_model,
-            "input_tokens":            raw["input_tokens"],
-            "cached_input_tokens":     raw["cached_input_tokens"],
-            "output_tokens":           raw["output_tokens"],
-            "reasoning_output_tokens": raw["reasoning_output_tokens"],
-            "total_tokens":            raw["total_tokens"],
-            "reasoning_effort":        event_effort,
-        })
+        events.append(
+            {
+                "session_id": session_id,
+                "timestamp": timestamp,
+                "model": event_model,
+                "input_tokens": raw["input_tokens"],
+                "cached_input_tokens": raw["cached_input_tokens"],
+                "output_tokens": raw["output_tokens"],
+                "reasoning_output_tokens": raw["reasoning_output_tokens"],
+                "total_tokens": raw["total_tokens"],
+                "reasoning_effort": event_effort,
+            }
+        )
 
     return events
 
@@ -189,7 +193,7 @@ def scan_all_projects(projects: list[dict]) -> list[dict]:
     for proj in projects:
         events = scan_sessions(proj["sessions_dir"])
         for e in events:
-            e["project"]   = proj["name"]
+            e["project"] = proj["name"]
             e["auth_type"] = proj.get("auth_type", "oauth")
         all_events.extend(events)
     all_events.sort(key=lambda e: e["timestamp"])
