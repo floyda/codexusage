@@ -119,6 +119,54 @@ function renderPool(pool, rangeLabel) {
     </div>`;
 }
 
+// ── Weekly pool breakdown ─────────────────────────────────────────────────
+function nearestPriorFriday(dateStr) {
+  const d = new Date(dateStr.slice(0, 10) + 'T12:00');
+  const daysSinceFri = (d.getDay() + 2) % 7;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - daysSinceFri);
+}
+
+function renderWeeklyPool(days, limit, range) {
+  const start = nearestPriorFriday(range.since);
+  const todayStr = localDate(new Date());
+  const buckets = [];
+
+  for (let fri = new Date(start); ; fri = new Date(fri.getFullYear(), fri.getMonth(), fri.getDate() + 7)) {
+    const nextFri = new Date(fri.getFullYear(), fri.getMonth(), fri.getDate() + 7);
+    const friStr  = localDate(fri);
+    const nextStr = localDate(nextFri);
+    buckets.push({ friStr, nextStr, credits: 0, isCurrent: todayStr >= friStr && todayStr < nextStr });
+    if (nextStr > range.until.slice(0, 10)) break;
+  }
+
+  for (const day of days) {
+    const b = buckets.find(b => day.date >= b.friStr && day.date < b.nextStr);
+    if (b) b.credits += day.credits ?? 0;
+  }
+
+  const fmtWeekLabel = (fri, next) =>
+    `${fri.slice(5).replace('-', '/')} – ${next.slice(5).replace('-', '/')}`;
+
+  const rows = buckets.map(({ friStr, nextStr, credits, isCurrent }) => {
+    const pct = Math.min((credits / limit) * 100, 100);
+    const fillClass = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
+    return `
+      <div class="week-row">
+        <span class="week-label">${fmtWeekLabel(friStr, nextStr)}${isCurrent ? ' ★' : ''}</span>
+        <div class="pool-track mini"><div class="pool-fill ${fillClass}" style="width:${pct}%"></div></div>
+        <span class="week-cr">${fmt.cr(credits)}</span>
+      </div>`;
+  }).join('');
+
+  const total = buckets.reduce((s, b) => s + b.credits, 0);
+  return `
+    <div class="card pool-card">
+      <div class="pool-header"><h2>Credits by week</h2></div>
+      <div class="week-rows">${rows}</div>
+      <div class="pool-reset">Total: ${fmt.cr(total)} &nbsp;·&nbsp; ★ = current week</div>
+    </div>`;
+}
+
 // ── API token card ────────────────────────────────────────────────────────────
 function renderApiTokenCard(api_token_totals, projects) {
   if (!api_token_totals || !api_token_totals.usd) return '';
@@ -455,7 +503,7 @@ function _paintOverview(app, cfgProjects) {
   app.innerHTML = `
     ${multiProject ? renderProjectPills(cfgProjects) : ''}
     ${buildOverviewControls()}
-    ${has_oauth ? renderPool(pool, label) : ''}
+    ${has_oauth ? (label !== 'this week' && days.length > 7 ? renderWeeklyPool(days, pool.limit, range) : renderPool(pool, label)) : ''}
     ${renderKPIs(totals, has_oauth)}
     ${has_api_token ? renderApiTokenCard(api_token_totals, filtered.projects) : ''}
     <div class="card">
