@@ -48,10 +48,15 @@ function applyProjectFilter(data) {
   const filteredDaysByProject = Object.fromEntries(
     Object.entries(data.days_by_project || {}).filter(([k]) => k === _activeProject)
   );
+  const filteredSessions = data.sessions.filter(s => s.project === _activeProject);
+  const cwdKeys = new Set(filteredSessions.map(s => s.cwd).filter(Boolean));
+  const filteredDaysByCwd = Object.fromEntries(
+    Object.entries(data.days_by_cwd || {}).filter(([k]) => cwdKeys.has(k))
+  );
   return {
     ...data,
     models:           filteredModels,
-    sessions:         data.sessions.filter(s => s.project === _activeProject),
+    sessions:         filteredSessions,
     projects:         (data.projects || []).filter(p => p.name === _activeProject),
     effort_levels:    [],
     has_effort_data:  false,
@@ -60,6 +65,8 @@ function applyProjectFilter(data) {
     api_token_totals: isApiToken ? { usd: projUsd } : data.api_token_totals,
     days_by_model:    filteredDaysByModel,
     days_by_project:  filteredDaysByProject,
+    days_by_cwd:      filteredDaysByCwd,
+    has_cwd_data:     cwdKeys.size > 1,
   };
 }
 
@@ -170,7 +177,12 @@ const CHART_PALETTE = [
   '#3498DB', '#D35400', '#8E44AD', '#16A085', '#C0392B',
 ];
 
-function renderChart(days, hasOauth, hasApiToken, daysByModel, daysByProject) {
+function cwdBasename(cwd) {
+  if (!cwd) return 'unknown';
+  return cwd.replace(/\\/g, '/').split('/').filter(Boolean).pop() || cwd;
+}
+
+function renderChart(days, hasOauth, hasApiToken, daysByModel, daysByProject, daysByCwd) {
   const useCredits = hasOauth && !hasApiToken;
   const fmtVal  = v => useCredits ? v.toFixed(4) + ' cr' : '$' + v.toFixed(4);
   const fmtAxis = v => useCredits ? v.toFixed(2) : '$' + v.toFixed(4);
@@ -189,6 +201,15 @@ function renderChart(days, hasOauth, hasApiToken, daysByModel, daysByProject) {
       { name: 'Cached', type: 'bar', stack: 'total', data: cached, itemStyle: { color: '#2A5A99' } },
       { name: 'Output', type: 'bar', stack: 'total', data: output, itemStyle: { color: '#3FB68B' } },
     ];
+  } else if (_chartBreakdown === 'by-cwd') {
+    const keys = Object.keys(daysByCwd || {}).sort();
+    series = keys.map((key, i) => ({
+      name: cwdBasename(key),
+      type: 'bar',
+      stack: 'total',
+      data: dates.map(date => +((daysByCwd[key][date]?.[metric] ?? 0).toFixed(4))),
+      itemStyle: { color: CHART_PALETTE[i % CHART_PALETTE.length] },
+    }));
   } else {
     const source = _chartBreakdown === 'by-model' ? daysByModel : daysByProject;
     const keys = Object.keys(source || {}).sort();
@@ -314,16 +335,20 @@ function renderSessionsTable(sessions) {
   if (!sessions.length) return '<p class="muted">No sessions.</p>';
   const multiProject = sessions.some(s => s.project && s.project !== 'default');
   const hasEffort    = sessions.some(s => s.reasoning_effort);
+  const hasCwd       = sessions.some(s => s.cwd);
   const projHead = multiProject ? '<th>Project</th>' : '';
   const effHead  = hasEffort    ? '<th>Effort</th>'  : '';
+  const cwdHead  = hasCwd       ? '<th>Repo</th>'    : '';
   const rows = sessions.map(s => {
     const projCell = multiProject ? `<td class="mono" style="font-size:11px">${s.project || '—'}</td>` : '';
     const effCell  = hasEffort    ? `<td>${fmt.effortBadge(s.reasoning_effort)}</td>` : '';
+    const cwdCell  = hasCwd       ? `<td class="mono" style="font-size:11px" title="${s.cwd || ''}">${cwdBasename(s.cwd)}</td>` : '';
     return `<tr>
       <td class="mono">${fmt.short(s.session_id)}</td>
       <td class="mono">${fmt.ts(s.last_timestamp)}</td>
       ${projCell}
       ${effCell}
+      ${cwdCell}
       <td class="num">${s.events}</td>
       <td class="num">${fmt.int(s.total_tokens)}</td>
       <td class="num">${fmt.usd(s.usd)}</td>
@@ -333,7 +358,7 @@ function renderSessionsTable(sessions) {
   return `
     <table>
       <thead><tr>
-        <th>Session</th><th>Date</th>${projHead}${effHead}
+        <th>Session</th><th>Date</th>${projHead}${effHead}${cwdHead}
         <th class="num">Events</th><th class="num">Tokens</th>
         <th class="num">USD</th><th class="num">Credits</th>
       </tr></thead>
@@ -379,7 +404,7 @@ function splitDT(dt) {
 }
 
 // ── Chart toggle ─────────────────────────────────────────────────────────────
-function initChartToggles(app, days, hasOauth, hasApiToken, daysByModel, daysByProject, cfgProjects) {
+function initChartToggles(app, cfgProjects) {
   $$('.toggle-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       _chartBreakdown = btn.dataset.breakdown;
@@ -419,7 +444,7 @@ function _paintOverview(app, cfgProjects) {
   const { pool, totals, days, models, sessions, range,
           projects, effort_levels, api_token_totals,
           has_oauth, has_api_token, has_effort_data,
-          days_by_model, days_by_project } = filtered;
+          days_by_model, days_by_project, days_by_cwd, has_cwd_data } = filtered;
 
   const wk = weekLabel();
   const fmtDT = s => s ? s.replace('T', ' ') : s;
@@ -440,6 +465,7 @@ function _paintOverview(app, cfgProjects) {
           <button class="toggle-btn${_chartBreakdown === 'token-type' ? ' active' : ''}" data-breakdown="token-type">Token type</button>
           <button class="toggle-btn${_chartBreakdown === 'by-model'   ? ' active' : ''}" data-breakdown="by-model">By model</button>
           ${multiProject ? `<button class="toggle-btn${_chartBreakdown === 'by-project' ? ' active' : ''}" data-breakdown="by-project">By project</button>` : ''}
+          ${has_cwd_data ? `<button class="toggle-btn${_chartBreakdown === 'by-cwd' ? ' active' : ''}" data-breakdown="by-cwd">By repo</button>` : ''}
         </div>
       </div>
       <div class="chart-box" id="daily-chart"></div>
@@ -455,9 +481,9 @@ function _paintOverview(app, cfgProjects) {
       ${renderSessionsTable(filtered.sessions.slice(0, 20))}
     </div>`;
 
-  renderChart(days, has_oauth, has_api_token, days_by_model, days_by_project);
+  renderChart(days, has_oauth, has_api_token, days_by_model, days_by_project, days_by_cwd);
   initOverviewControls();
-  initChartToggles(app, days, has_oauth, has_api_token, days_by_model, days_by_project, cfgProjects);
+  initChartToggles(app, cfgProjects);
   if (multiProject) initProjectPills(app, cfgProjects);
 }
 
@@ -590,7 +616,32 @@ async function route() {
   await fn(app);
 }
 
+// ── Auto-refresh ──────────────────────────────────────────────────────────────
+const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
+let _refreshTimer = null;
+let _refreshCountdownTimer = null;
+let _refreshAt = null;
+
+function startCountdown() {
+  clearInterval(_refreshCountdownTimer);
+  _refreshCountdownTimer = setInterval(() => {
+    const btn = document.getElementById('refresh-btn');
+    if (!btn || _refreshAt === null) return;
+    const secsLeft = Math.max(0, Math.round((_refreshAt - Date.now()) / 1000));
+    const m = Math.floor(secsLeft / 60);
+    const s = String(secsLeft % 60).padStart(2, '0');
+    btn.textContent = `↻ ${m}:${s}`;
+  }, 1000);
+}
+
+function scheduleRefresh() {
+  clearTimeout(_refreshTimer);
+  _refreshAt = Date.now() + REFRESH_INTERVAL_MS;
+  startCountdown();
+  _refreshTimer = setTimeout(() => { route().then(scheduleRefresh); }, REFRESH_INTERVAL_MS);
+}
+
 buildTopbar();
-route();
+route().then(scheduleRefresh);
 window.addEventListener('hashchange', route);
-document.getElementById('refresh-btn').addEventListener('click', route);
+document.getElementById('refresh-btn').addEventListener('click', () => { route().then(scheduleRefresh); });
