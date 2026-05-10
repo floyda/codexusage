@@ -45,6 +45,13 @@ CODEX_PROJECTS = [
     "auth/service",
 ]
 
+CODEX_CWDS = [
+    "/home/user/workspace/myapp",
+    "/home/user/workspace/infra",
+    "/home/user/workspace/data-pipeline",
+    "/home/user/workspace/api-gateway",
+]
+
 random.seed(42)
 
 
@@ -54,6 +61,20 @@ def iso(dt: datetime) -> str:
 
 def is_reasoning_model(model: str) -> bool:
     return model.startswith("o") and model[1:2].isdigit()
+
+
+def session_meta(dt: datetime, session_id: str, cwd: str) -> dict:
+    return {
+        "timestamp": iso(dt),
+        "type": "session_meta",
+        "payload": {
+            "id": session_id,
+            "timestamp": iso(dt),
+            "cwd": cwd,
+            "originator": "codex-tui",
+            "model_provider": "openai",
+        },
+    }
 
 
 def turn_context(dt: datetime, model: str, effort: str | None) -> dict:
@@ -82,7 +103,10 @@ def token_count_event(dt: datetime, model: str, last: dict) -> dict:
 
 
 def make_session(project: str, start: datetime, model: str, effort: str | None, turns: int) -> list[dict]:
-    lines: list[dict] = [turn_context(start, model, effort)]
+    import uuid
+    cwd = random.choice(CODEX_CWDS)
+    session_id = str(uuid.uuid4())
+    lines: list[dict] = [session_meta(start, session_id, cwd), turn_context(start, model, effort)]
     t = start + timedelta(seconds=2)
     for _ in range(turns):
         inp    = random.randint(2_000, 80_000)

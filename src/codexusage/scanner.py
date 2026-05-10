@@ -87,6 +87,7 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
     current_model: str | None = None
     current_effort: str | None = None
     previous_totals: dict | None = None
+    session_cwd: str | None = None
 
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -107,6 +108,12 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
         entry_type = rec.get("type")
         payload = rec.get("payload")
         timestamp = rec.get("timestamp")
+
+        if entry_type == "session_meta" and isinstance(payload, dict):
+            cwd = payload.get("cwd")
+            if isinstance(cwd, str) and cwd.strip():
+                session_cwd = cwd.strip()
+            continue
 
         if entry_type == "turn_context":
             model = _extract_model(payload)
@@ -162,6 +169,7 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
                 "reasoning_output_tokens": raw["reasoning_output_tokens"],
                 "total_tokens": raw["total_tokens"],
                 "reasoning_effort": event_effort,
+                "cwd": session_cwd,
             }
         )
 

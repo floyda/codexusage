@@ -77,23 +77,25 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
         d["usd"] = round(d["usd"], 4)
         d["credits"] = round(d["credits"], 4)
 
-    # Per-day-per-model and per-day-per-project breakdowns for chart drill-down
+    # Per-day-per-model, per-day-per-project, and per-day-per-cwd breakdowns for chart drill-down
     days_model_map: dict[str, dict[str, dict]] = {}
     days_project_map: dict[str, dict[str, dict]] = {}
+    days_cwd_map: dict[str, dict[str, dict]] = {}
     for e in filtered:
         day = e["timestamp"][:10]
         m = e["model"]
         proj = e.get("project", "default")
+        cwd = e.get("cwd") or "unknown"
         usd = tokens_to_usd(m, e, pricing)
         credits = usd_to_credits(usd, cpd) if e.get("auth_type", "oauth") == "oauth" else 0.0
-        for mapping, key in ((days_model_map, m), (days_project_map, proj)):
+        for mapping, key in ((days_model_map, m), (days_project_map, proj), (days_cwd_map, cwd)):
             if key not in mapping:
                 mapping[key] = {}
             if day not in mapping[key]:
                 mapping[key][day] = {"usd": 0.0, "credits": 0.0}
             mapping[key][day]["usd"] += usd
             mapping[key][day]["credits"] += credits
-    for mapping in (days_model_map, days_project_map):
+    for mapping in (days_model_map, days_project_map, days_cwd_map):
         for key_data in mapping.values():
             for v in key_data.values():
                 v["usd"] = round(v["usd"], 4)
@@ -170,6 +172,7 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
                 "credits": 0.0,
                 "project": e.get("project", "default"),
                 "reasoning_effort": e.get("reasoning_effort"),
+                "cwd": e.get("cwd"),
             }
         s = sessions_map[sid]
         s["events"] += 1
@@ -253,11 +256,13 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
     has_oauth = any(e.get("auth_type", "oauth") == "oauth" for e in filtered)
     has_api_token = any(e.get("auth_type") == "api_token" for e in filtered)
     has_effort_data = any(e.get("reasoning_effort") for e in filtered)
+    has_cwd_data = len(days_cwd_map) > 1
 
     return {
         "days": days,
         "days_by_model": days_model_map,
         "days_by_project": days_project_map,
+        "days_by_cwd": days_cwd_map,
         "models": models,
         "sessions": sessions,
         "projects": projects_list,
@@ -276,6 +281,7 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
         "has_oauth": has_oauth,
         "has_api_token": has_api_token,
         "has_effort_data": has_effort_data,
+        "has_cwd_data": has_cwd_data,
         "range": {"since": since, "until": until},
     }
 
