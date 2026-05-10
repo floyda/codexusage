@@ -136,7 +136,7 @@ function renderWeeklyPool(days, limit, range) {
     const friStr  = localDate(fri);
     const nextStr = localDate(nextFri);
     buckets.push({ friStr, nextStr, credits: 0, isCurrent: todayStr >= friStr && todayStr < nextStr });
-    if (nextStr > range.until.slice(0, 10)) break;
+    if (nextStr >= range.until.slice(0, 10)) break;
   }
 
   for (const day of days) {
@@ -148,7 +148,7 @@ function renderWeeklyPool(days, limit, range) {
     `${fri.slice(5).replace('-', '/')} – ${next.slice(5).replace('-', '/')}`;
 
   const rows = buckets.map(({ friStr, nextStr, credits, isCurrent }) => {
-    const pct = Math.min((credits / limit) * 100, 100);
+    const pct = limit > 0 ? Math.min((credits / limit) * 100, 100) : 0;
     const fillClass = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
     return `
       <div class="week-row">
