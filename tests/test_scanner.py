@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from codexusage.scanner import (
+    _assign_project,
     _ensure_int,
     _normalize_usage,
     _parse_file,
@@ -223,11 +224,123 @@ class TestScanSessions:
         assert timestamps == sorted(timestamps)
 
 
+def _session_with_cwd(
+    tmp_path: Path, filename: str, cwd: str, timestamp: str = "2024-06-01T10:00:00Z"
+) -> Path:
+    f = tmp_path / filename
+    meta = {"type": "session_meta", "payload": {"cwd": cwd}}
+    f.write_text(_make_jsonl(meta, _token_event(timestamp, input=10, output=5)))
+    return f
+
+
+class TestAssignProject:
+    def test_single_project_always_assigned(self) -> None:
+        group = [{"name": "only", "auth_type": "oauth", "repos": ["/repo/a"]}]
+        assert _assign_project("/unrelated/path", group)["name"] == "only"
+
+    def test_cwd_matches_repo_prefix(self) -> None:
+        group = [
+            {"name": "proj-a", "auth_type": "oauth", "repos": ["/repo/a"]},
+            {"name": "proj-b", "auth_type": "oauth", "repos": ["/repo/b"]},
+        ]
+        assert _assign_project("/repo/a/src/main.py", group)["name"] == "proj-a"
+        assert _assign_project("/repo/b", group)["name"] == "proj-b"
+
+    def test_exact_cwd_match(self) -> None:
+        group = [
+            {"name": "proj-a", "auth_type": "oauth", "repos": ["/repo/a"]},
+            {"name": "proj-b", "auth_type": "oauth", "repos": ["/repo/b"]},
+        ]
+        assert _assign_project("/repo/a", group)["name"] == "proj-a"
+
+    def test_unmatched_cwd_falls_back_to_first(self) -> None:
+        group = [
+            {"name": "proj-a", "auth_type": "oauth", "repos": ["/repo/a"]},
+            {"name": "proj-b", "auth_type": "oauth", "repos": ["/repo/b"]},
+        ]
+        assert _assign_project("/unrelated", group)["name"] == "proj-a"
+
+    def test_none_cwd_falls_back_to_first(self) -> None:
+        group = [
+            {"name": "proj-a", "auth_type": "oauth", "repos": ["/repo/a"]},
+            {"name": "proj-b", "auth_type": "oauth", "repos": ["/repo/b"]},
+        ]
+        assert _assign_project(None, group)["name"] == "proj-a"
+
+
 class TestScanAllProjects:
     def test_tags_project_and_auth_type(self, tmp_path: Path) -> None:
         f = tmp_path / "session.jsonl"
         f.write_text(_make_jsonl(_token_event("2024-06-01T10:00:00Z", input=10, output=5)))
-        projects = [{"name": "myproj", "sessions_dir": str(tmp_path), "auth_type": "oauth"}]
+        projects = [
+            {"name": "myproj", "sessions_dir": str(tmp_path), "auth_type": "oauth", "repos": []}
+        ]
         events = scan_all_projects(projects)
         assert all(e["project"] == "myproj" for e in events)
         assert all(e["auth_type"] == "oauth" for e in events)
+
+    def test_shared_sessions_dir_assigns_by_cwd(self, tmp_path: Path) -> None:
+        _session_with_cwd(tmp_path, "session_a.jsonl", "/repo/a/src")
+        _session_with_cwd(tmp_path, "session_b.jsonl", "/repo/b", timestamp="2024-06-01T11:00:00Z")
+        projects = [
+            {
+                "name": "proj-a",
+                "sessions_dir": str(tmp_path),
+                "auth_type": "oauth",
+                "repos": ["/repo/a"],
+            },
+            {
+                "name": "proj-b",
+                "sessions_dir": str(tmp_path),
+                "auth_type": "api_token",
+                "repos": ["/repo/b"],
+            },
+        ]
+        events = scan_all_projects(projects)
+        by_project = {e["project"] for e in events}
+        assert by_project == {"proj-a", "proj-b"}
+        proj_a_events = [e for e in events if e["project"] == "proj-a"]
+        proj_b_events = [e for e in events if e["project"] == "proj-b"]
+        assert len(proj_a_events) == 1
+        assert len(proj_b_events) == 1
+        assert proj_b_events[0]["auth_type"] == "api_token"
+
+    def test_shared_sessions_dir_scanned_once(self, tmp_path: Path) -> None:
+        f = tmp_path / "session.jsonl"
+        f.write_text(_make_jsonl(_token_event("2024-06-01T10:00:00Z", input=10, output=5)))
+        projects = [
+            {
+                "name": "proj-a",
+                "sessions_dir": str(tmp_path),
+                "auth_type": "oauth",
+                "repos": ["/repo/a"],
+            },
+            {
+                "name": "proj-b",
+                "sessions_dir": str(tmp_path),
+                "auth_type": "oauth",
+                "repos": ["/repo/b"],
+            },
+        ]
+        events = scan_all_projects(projects)
+        # Should have exactly 1 event, not 2 (no double-scan)
+        assert len(events) == 1
+
+    def test_unmatched_cwd_falls_back_to_first_project(self, tmp_path: Path) -> None:
+        _session_with_cwd(tmp_path, "session.jsonl", "/unrelated/path")
+        projects = [
+            {
+                "name": "proj-a",
+                "sessions_dir": str(tmp_path),
+                "auth_type": "oauth",
+                "repos": ["/repo/a"],
+            },
+            {
+                "name": "proj-b",
+                "sessions_dir": str(tmp_path),
+                "auth_type": "oauth",
+                "repos": ["/repo/b"],
+            },
+        ]
+        events = scan_all_projects(projects)
+        assert events[0]["project"] == "proj-a"

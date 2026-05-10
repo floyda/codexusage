@@ -42,11 +42,21 @@ def load_config() -> dict[str, Any]:
     cfg = {**DEFAULTS, **stored}
     if not cfg["sessions_dir"]:
         cfg["sessions_dir"] = _default_sessions_dir()
-    # Synthesize a single default OAuth project from legacy sessions_dir if no projects configured.
+    # Synthesize a single default OAuth project from sessions_dir if no projects configured.
     if not cfg["projects"]:
         cfg["projects"] = [
-            {"name": "default", "sessions_dir": cfg["sessions_dir"], "auth_type": "oauth"}
+            {
+                "name": "default",
+                "sessions_dir": cfg["sessions_dir"],
+                "auth_type": "oauth",
+                "repos": [],
+            }
         ]
+    else:
+        # Ensure every project has a repos field (runtime default, no file rewrite).
+        for p in cfg["projects"]:
+            if "repos" not in p:
+                p["repos"] = []
     return cfg
 
 
@@ -58,15 +68,22 @@ def save_config(updates: dict[str, Any]) -> None:
     path.write_text(json.dumps(current, indent=2), encoding="utf-8")
 
 
-def add_project(name: str, sessions_dir: str, auth_type: str) -> None:
+def add_project(
+    name: str, sessions_dir: str, auth_type: str, repos: list[str] | None = None
+) -> None:
     if auth_type not in {"oauth", "api_token"}:
         raise ValueError(f"auth_type must be 'oauth' or 'api_token', got {auth_type!r}")
     stored = _read_raw()
     projects: list[dict] = stored.get("projects", [])
     if any(p["name"] == name for p in projects):
         raise ValueError(f"Project {name!r} already exists")
-    projects = [*projects, {"name": name, "sessions_dir": sessions_dir, "auth_type": auth_type}]
-    save_config({"projects": projects})
+    entry: dict[str, Any] = {
+        "name": name,
+        "sessions_dir": sessions_dir,
+        "auth_type": auth_type,
+        "repos": repos or [],
+    }
+    save_config({"projects": [*projects, entry]})
 
 
 def remove_project(name: str) -> None:
@@ -76,6 +93,36 @@ def remove_project(name: str) -> None:
     if len(new_projects) == len(projects):
         raise ValueError(f"Project {name!r} not found")
     save_config({"projects": new_projects})
+
+
+def add_repo(project_name: str, repo_path: str) -> None:
+    stored = _read_raw()
+    projects: list[dict] = stored.get("projects", [])
+    for p in projects:
+        if p["name"] == project_name:
+            repos: list[str] = list(p.get("repos", []))
+            if repo_path in repos:
+                raise ValueError(f"Repo {repo_path!r} already in project {project_name!r}")
+            repos.append(repo_path)
+            p["repos"] = repos
+            save_config({"projects": projects})
+            return
+    raise ValueError(f"Project {project_name!r} not found")
+
+
+def remove_repo(project_name: str, repo_path: str) -> None:
+    stored = _read_raw()
+    projects: list[dict] = stored.get("projects", [])
+    for p in projects:
+        if p["name"] == project_name:
+            repos = list(p.get("repos", []))
+            if repo_path not in repos:
+                raise ValueError(f"Repo {repo_path!r} not found in project {project_name!r}")
+            repos.remove(repo_path)
+            p["repos"] = repos
+            save_config({"projects": projects})
+            return
+    raise ValueError(f"Project {project_name!r} not found")
 
 
 def list_projects() -> list[dict[str, Any]]:

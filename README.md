@@ -8,7 +8,7 @@ A web dashboard and CLI tool for tracking OpenAI Codex CLI token usage with ente
 - **Credit Pool Management**: Track usage against configurable weekly credit allocations
 - **Interactive Dashboard**: Visualize usage patterns over time with an interactive web interface
 - **CLI Commands**: Quick access to usage summaries from the terminal
-- **Multi-Project Support**: Track OAuth and API-token projects separately with different billing modes
+- **Multi-Project Support**: Group multiple git repos under one project; track OAuth and API-token projects separately with different billing modes
 
 ## Screenshots
 
@@ -133,16 +133,28 @@ Write a default config file to `~/.config/codexusage/config.json`.
 | `--credits-per-dollar N` | Credits per $1 of token spend |
 | `--port N` | Dashboard port |
 
-### `codexusage config project add/list/remove`
+### `codexusage config project add/list/remove/add-repo/remove-repo`
 
-Manage multiple projects (useful when you have both OAuth and API-token workspaces):
+A project covers one CODEX_HOME (sessions directory) and one or more git repo checkouts. Events are assigned to a project by matching the session's working directory against the project's declared repos (prefix match). When multiple projects share the same sessions directory, repos are used to route events to the right project.
 
 ```bash
-# OAuth project (usage counts against your weekly credit pool)
-codexusage config project add --name work --home ~/.codex --auth-type oauth
+# OAuth project with two repos sharing one CODEX_HOME
+codexusage config project add \
+  --name work \
+  --home ~/.codex \
+  --auth-type oauth \
+  --repo ~/code/repo_a \
+  --repo ~/code/repo_b
 
 # API-token project (billed in USD, shown separately)
-codexusage config project add --name personal --home ~/personal/.codex --auth-type api_token
+codexusage config project add \
+  --name personal \
+  --home ~/personal/.codex \
+  --auth-type api_token
+
+# Add / remove a repo from an existing project
+codexusage config project add-repo work ~/code/repo_c
+codexusage config project remove-repo work ~/code/repo_b
 
 codexusage config project list
 codexusage config project remove --name personal
@@ -159,7 +171,12 @@ codexusage config project remove --name personal
   "sessions_dir": "~/.codex/sessions",
   "port": 8080,
   "projects": [
-    {"name": "default", "sessions_dir": "~/.codex/sessions", "auth_type": "oauth"}
+    {
+      "name": "work",
+      "sessions_dir": "~/.codex/sessions",
+      "auth_type": "oauth",
+      "repos": ["/home/user/code/repo_a", "/home/user/code/repo_b"]
+    }
   ]
 }
 ```

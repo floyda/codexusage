@@ -193,6 +193,9 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
     sessions = sorted(sessions_map.values(), key=lambda x: x["last_timestamp"], reverse=True)
 
     # Per-project
+    project_repos: dict[str, list[str]] = {
+        p["name"]: p.get("repos", []) for p in cfg.get("projects", [])
+    }
     projects_map: dict[str, dict] = {}
     for e in filtered:
         pname = e.get("project", "default")
@@ -201,6 +204,7 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
             projects_map[pname] = {
                 "name": pname,
                 "auth_type": auth_type,
+                "repos": project_repos.get(pname, []),
                 "events": 0,
                 "total_tokens": 0,
                 "usd": 0.0,

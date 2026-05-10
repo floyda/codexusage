@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 import codexusage.config as config_mod
-from codexusage.config import DEFAULTS
+from codexusage.config import DEFAULTS, add_repo, remove_repo
 
 
 @pytest.fixture(autouse=True)
@@ -89,3 +89,50 @@ class TestProjectManagement:
         projects = config_mod.list_projects()
         work = next(p for p in projects if p["name"] == "work")
         assert work["auth_type"] == "api_token"
+
+    def test_add_project_with_repos(self) -> None:
+        config_mod.add_project("proj1", "/s", "oauth", repos=["/repo/a", "/repo/b"])
+        p = next(p for p in config_mod.list_projects() if p["name"] == "proj1")
+        assert p["repos"] == ["/repo/a", "/repo/b"]
+
+    def test_add_project_without_repos_defaults_empty(self) -> None:
+        config_mod.add_project("proj1", "/s", "oauth")
+        p = next(p for p in config_mod.list_projects() if p["name"] == "proj1")
+        assert p["repos"] == []
+
+    def test_synthesized_default_project_has_repos(self) -> None:
+        cfg = config_mod.load_config()
+        assert cfg["projects"][0]["repos"] == []
+
+
+class TestRepoManagement:
+    def test_add_repo(self) -> None:
+        config_mod.add_project("proj1", "/s", "oauth")
+        add_repo("proj1", "/home/user/repo_a")
+        p = next(p for p in config_mod.list_projects() if p["name"] == "proj1")
+        assert "/home/user/repo_a" in p["repos"]
+
+    def test_add_repo_duplicate_raises(self) -> None:
+        config_mod.add_project("proj1", "/s", "oauth")
+        add_repo("proj1", "/home/user/repo_a")
+        with pytest.raises(ValueError, match="already in project"):
+            add_repo("proj1", "/home/user/repo_a")
+
+    def test_add_repo_unknown_project_raises(self) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            add_repo("ghost", "/repo")
+
+    def test_remove_repo(self) -> None:
+        config_mod.add_project("proj1", "/s", "oauth", repos=["/repo/a", "/repo/b"])
+        remove_repo("proj1", "/repo/a")
+        p = next(p for p in config_mod.list_projects() if p["name"] == "proj1")
+        assert p["repos"] == ["/repo/b"]
+
+    def test_remove_repo_not_found_raises(self) -> None:
+        config_mod.add_project("proj1", "/s", "oauth")
+        with pytest.raises(ValueError, match="not found in project"):
+            remove_repo("proj1", "/nonexistent")
+
+    def test_remove_repo_unknown_project_raises(self) -> None:
+        with pytest.raises(ValueError, match="not found"):
+            remove_repo("ghost", "/repo")

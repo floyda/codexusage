@@ -8,7 +8,15 @@ import webbrowser
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from .config import add_project, list_projects, load_config, remove_project, save_config
+from .config import (
+    add_project,
+    add_repo,
+    list_projects,
+    load_config,
+    remove_project,
+    remove_repo,
+    save_config,
+)
 from .pricing import load_pricing, tokens_to_usd, usd_to_credits
 from .scanner import scan_all_projects
 
@@ -177,6 +185,8 @@ def cmd_dashboard(args):
     print(f"  projects ({len(projects)}):")
     for p in projects:
         print(f"    [{p['auth_type']}] {p['name']} → {p['sessions_dir']}")
+        for r in p.get("repos", []):
+            print(f"      repo: {r}")
     print(f"  pool: {cfg['weekly_pool_credits']} cr @ {cfg['credits_per_dollar']} cr/$")
     print("  Press Ctrl+C to stop.\n")
 
@@ -226,7 +236,9 @@ def cmd_config_init(args):
             "credits_per_dollar": DEFAULTS["credits_per_dollar"],
             "sessions_dir": sessions_dir,
             "port": DEFAULTS["port"],
-            "projects": [{"name": "default", "sessions_dir": sessions_dir, "auth_type": "oauth"}],
+            "projects": [
+                {"name": "default", "sessions_dir": sessions_dir, "auth_type": "oauth", "repos": []}
+            ],
         }
     )
     print(f"Config written to {path}")
@@ -241,18 +253,25 @@ def cmd_config_init(args):
     )
 
 
+def _print_projects(projects: list[dict]) -> None:
+    for p in projects:
+        print(f"  {p['name']:<20} [{p['auth_type']}]  {p['sessions_dir']}")
+        for r in p.get("repos", []):
+            print(f"    {'':20}   repo: {r}")
+
+
 def cmd_project_add(args):
     sessions_dir = args.sessions_dir
     if getattr(args, "home", None):
         sessions_dir = str(Path(args.home) / "sessions")
+    repos: list[str] = getattr(args, "repo", None) or []
     try:
-        add_project(args.name, sessions_dir, args.auth_type)
+        add_project(args.name, sessions_dir, args.auth_type, repos)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     print(f"Added project '{args.name}' [{args.auth_type}] → {sessions_dir}")
-    for p in list_projects():
-        print(f"  {p['name']:<20} [{p['auth_type']}]  {p['sessions_dir']}")
+    _print_projects(list_projects())
 
 
 def cmd_project_list(args):
@@ -260,8 +279,7 @@ def cmd_project_list(args):
     if not projects:
         print("No projects configured.")
         return
-    for p in projects:
-        print(f"  {p['name']:<20} [{p['auth_type']}]  {p['sessions_dir']}")
+    _print_projects(projects)
 
 
 def cmd_project_remove(args):
@@ -271,9 +289,27 @@ def cmd_project_remove(args):
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
     print(f"Removed project '{args.name}'.")
-    remaining = list_projects()
-    for p in remaining:
-        print(f"  {p['name']:<20} [{p['auth_type']}]  {p['sessions_dir']}")
+    _print_projects(list_projects())
+
+
+def cmd_project_add_repo(args):
+    try:
+        add_repo(args.project, args.path)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Added repo '{args.path}' to project '{args.project}'.")
+    _print_projects(list_projects())
+
+
+def cmd_project_remove_repo(args):
+    try:
+        remove_repo(args.project, args.path)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Removed repo '{args.path}' from project '{args.project}'.")
+    _print_projects(list_projects())
 
 
 def _date_arg(s: str) -> str:
@@ -359,6 +395,12 @@ def main():
         dest="auth_type",
         help="oauth (counts toward credit pool) or api_token (USD billing)",
     )
+    cadd.add_argument(
+        "--repo",
+        action="append",
+        metavar="PATH",
+        help="Repo path belonging to this project (repeatable)",
+    )
     cadd.set_defaults(func=cmd_project_add)
 
     clist = cproj_sub.add_parser("list", help="List configured projects")
@@ -367,6 +409,16 @@ def main():
     cremove = cproj_sub.add_parser("remove", help="Remove a project")
     cremove.add_argument("--name", required=True)
     cremove.set_defaults(func=cmd_project_remove)
+
+    cadd_repo = cproj_sub.add_parser("add-repo", help="Add a repo path to a project")
+    cadd_repo.add_argument("project", help="Project name")
+    cadd_repo.add_argument("path", help="Absolute path to the repo")
+    cadd_repo.set_defaults(func=cmd_project_add_repo)
+
+    cremove_repo = cproj_sub.add_parser("remove-repo", help="Remove a repo path from a project")
+    cremove_repo.add_argument("project", help="Project name")
+    cremove_repo.add_argument("path", help="Repo path to remove")
+    cremove_repo.set_defaults(func=cmd_project_remove_repo)
 
     args = p.parse_args()
     args.func(args)

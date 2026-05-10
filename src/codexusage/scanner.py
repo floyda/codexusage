@@ -195,14 +195,41 @@ def scan_sessions(sessions_dir: str) -> list[dict]:
     return all_events
 
 
+def _assign_project(cwd: str | None, group: list[dict]) -> dict:
+    """Return the project from group that best matches cwd via repos prefix."""
+    if len(group) == 1:
+        return group[0]
+    if cwd:
+        for proj in group:
+            for repo in proj.get("repos", []):
+                prefix = repo.rstrip("/")
+                if cwd == prefix or cwd.startswith(prefix + "/"):
+                    return proj
+    return group[0]
+
+
 def scan_all_projects(projects: list[dict]) -> list[dict]:
-    """Scan all projects and tag each event with project name and auth_type."""
-    all_events: list[dict] = []
+    """Scan all projects and tag each event with project name and auth_type.
+
+    Groups projects by sessions_dir so each directory is scanned exactly once.
+    When multiple projects share a sessions_dir, events are assigned by cwd
+    prefix-matching against each project's repos list; unmatched events fall
+    back to the first project in the group.
+    """
+    from collections import defaultdict
+
+    groups: dict[str, list[dict]] = defaultdict(list)
     for proj in projects:
-        events = scan_sessions(proj["sessions_dir"])
+        groups[proj["sessions_dir"]].append(proj)
+
+    all_events: list[dict] = []
+    for sessions_dir, group in groups.items():
+        events = scan_sessions(sessions_dir)
         for e in events:
+            proj = _assign_project(e.get("cwd"), group)
             e["project"] = proj["name"]
             e["auth_type"] = proj.get("auth_type", "oauth")
         all_events.extend(events)
+
     all_events.sort(key=lambda e: e["timestamp"])
     return all_events
