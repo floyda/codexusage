@@ -10,8 +10,8 @@ from datetime import date, datetime, timedelta
 from importlib.resources import files
 from urllib.parse import parse_qs, urlparse
 
+from .cache import scan_all_projects_cached
 from .pricing import load_pricing, tokens_to_usd, usd_to_credits
-from .scanner import scan_all_projects
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$")
 
@@ -339,7 +339,7 @@ def build_handler(cfg: dict):
                     return _send_json(self, {"error": "invalid since — expected YYYY-MM-DD"}, 400)
                 if qs_until and not _DATE_RE.match(qs_until):
                     return _send_json(self, {"error": "invalid until — expected YYYY-MM-DD"}, 400)
-                events = scan_all_projects(cfg["projects"])
+                events = scan_all_projects_cached(cfg["projects"])
                 def_bounds = _week_bounds() if path == "/api/week" else _today_bounds()
                 since = qs_since if qs_since else def_bounds[0]
                 until = qs_until if qs_until else def_bounds[1]
@@ -356,7 +356,7 @@ def build_handler(cfg: dict):
             if path == "/api/sessions":
                 since = qs.get("since", [None])[0] or "0000-01-01"
                 until = qs.get("until", [None])[0] or "9999-12-31"
-                events = scan_all_projects(cfg["projects"])
+                events = scan_all_projects_cached(cfg["projects"])
                 result = _aggregate(events, since, until, pricing, cfg)
                 return _send_json(self, {"sessions": result["sessions"]})
 

@@ -8,6 +8,7 @@ import webbrowser
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from .cache import scan_all_projects_cached
 from .config import (
     add_project,
     add_repo,
@@ -18,7 +19,6 @@ from .config import (
     save_config,
 )
 from .pricing import load_pricing, tokens_to_usd, usd_to_credits
-from .scanner import scan_all_projects
 
 
 def _merge_cfg(cfg: dict, args) -> dict:
@@ -143,7 +143,7 @@ def _print_summary(label: str, events: list[dict], cfg: dict) -> None:
 
 def cmd_today(args):
     cfg = _merge_cfg(load_config(), args)
-    events = scan_all_projects(cfg["projects"])
+    events = scan_all_projects_cached(cfg["projects"])
     user = _user_range(args)
     since, until = user if user else _today_range()
     label = f"{since} .. {until}" if user else "today"
@@ -152,7 +152,7 @@ def cmd_today(args):
 
 def cmd_week(args):
     cfg = _merge_cfg(load_config(), args)
-    events = scan_all_projects(cfg["projects"])
+    events = scan_all_projects_cached(cfg["projects"])
     user = _user_range(args)
     if user:
         since, until = user
