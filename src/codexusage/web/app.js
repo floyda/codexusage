@@ -606,12 +606,27 @@ async function renderSessionsRoute(app) {
   $('#filter-btn').addEventListener('click', load);
 }
 
+// ── Favicon ───────────────────────────────────────────────────────────────────
+function buildFavicon() {
+  const img = new Image();
+  img.onload = () => {
+    const size = 64;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, size, size);
+    const link = document.querySelector('link[rel="icon"]');
+    if (link) link.href = canvas.toDataURL('image/png');
+  };
+  img.src = '/web/billfish_800_white_transparent.png';
+}
+
 // ── Router + topbar ───────────────────────────────────────────────────────────
 function buildTopbar() {
   const header = document.createElement('header');
   header.className = 'topbar';
   header.innerHTML = `
-    <div class="brand">Codex Usage</div>
+    <div class="brand"><img src="/web/billfish_800_white_transparent.png" class="brand-logo" alt="">Billfish</div>
     <nav>
       ${Object.keys(ROUTES).map(r => `<a href="#${r}" data-route="${r}">${r.slice(1)}</a>`).join('')}
     </nav>
@@ -706,6 +721,7 @@ function scheduleRefresh() {
 }
 
 buildTopbar();
+buildFavicon();
 route().then(scheduleRefresh);
 window.addEventListener('hashchange', route);
 document.getElementById('refresh-btn').addEventListener('click', () => { route().then(scheduleRefresh); });

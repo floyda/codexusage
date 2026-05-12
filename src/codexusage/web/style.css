@@ -38,10 +38,8 @@ header.topbar {
   font-weight: 600; font-size: 14px; letter-spacing: -0.01em;
   display: flex; align-items: center; gap: 8px;
 }
-.topbar .brand::before {
-  content: ""; display: inline-block; width: 8px; height: 8px;
-  background: var(--accent); border-radius: 2px;
-  box-shadow: 0 0 12px var(--accent);
+.topbar .brand-logo {
+  width: 24px; height: 24px; object-fit: contain;
 }
 .topbar nav { display: flex; gap: 2px; margin-left: 12px; }
 .topbar nav a {
