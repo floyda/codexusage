@@ -39,19 +39,19 @@ Codex Usage — week of 2025-05-02
 ### pipx (recommended for a global CLI tool)
 
 ```bash
-pipx install git+https://github.com/andyfloyd86/codexusage.git
+pipx install git+https://github.com/floyda/codexusage.git
 ```
 
 ### uv
 
 ```bash
-uv tool install git+https://github.com/andyfloyd86/codexusage.git
+uv tool install git+https://github.com/floyda/codexusage.git
 ```
 
 ### pip
 
 ```bash
-pip install git+https://github.com/andyfloyd86/codexusage.git
+pip install git+https://github.com/floyda/codexusage.git
 ```
 
 ## Quick Start
@@ -186,7 +186,7 @@ codexusage config project remove --name personal
 Requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-git clone https://github.com/andyfloyd86/codexusage.git
+git clone https://github.com/floyda/codexusage.git
 cd codexusage
 
 uv sync --group dev        # create .venv and install all deps
