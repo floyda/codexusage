@@ -96,9 +96,9 @@ function renderPool(pool, rangeLabel) {
   const fillClass = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
   const isDefaultWeek = !rangeLabel || rangeLabel === 'this week';
   const title = isDefaultWeek ? 'Weekly Credit Pool' : `Credits — ${rangeLabel}`;
-  const d = new Date();
-  const daysSinceFri = (d.getDay() + 2) % 7;
-  const daysLeft = daysSinceFri === 0 && d.getHours() < 17 ? 0 : (7 - daysSinceFri) || 7;
+  const ld = londonDateParts();
+  const daysSinceFri = (ld.dayOfWeek + 2) % 7;
+  const daysLeft = daysSinceFri === 0 && ld.hour < 17 ? 0 : (7 - daysSinceFri) || 7;
   const resetNote = daysLeft === 0 ? 'resets today at 17:00' : `resets Friday · ${daysLeft} day${daysLeft !== 1 ? 's' : ''} left`;
   const meta = isDefaultWeek ? resetNote : '';
   return `
@@ -144,8 +144,7 @@ function renderWeeklyPool(days, limit, range) {
     if (b) b.credits += day.credits ?? 0;
   }
 
-  const fmtWeekLabel = (fri, next) =>
-    `${fri.slice(5).replace('-', '/')} – ${next.slice(5).replace('-', '/')}`;
+  const fmtWeekLabel = (fri, next) => `${fmtDay(fri)} – ${fmtDay(next)}`;
 
   const rows = buckets.map(({ friStr, nextStr, credits, isCurrent }) => {
     const pct = limit > 0 ? Math.min((credits / limit) * 100, 100) : 0;
@@ -288,10 +287,10 @@ function renderChart(days, hasOauth, hasApiToken, daysByModel, daysByProject, da
         const nonZero = params.filter(p => p.value > 0);
         const total = params.reduce((s, p) => s + p.value, 0);
         const rows = nonZero.map(p => `${p.marker} ${p.seriesName}: ${fmtVal(p.value)}`).join('<br>');
-        return `${params[0].name}<br>${rows}<br><b>Total: ${fmtVal(total)}</b>`;
+        return `${fmtDay(params[0].name)}<br>${rows}<br><b>Total: ${fmtVal(total)}</b>`;
       },
     },
-    xAxis: { type: 'category', data: dates, axisLabel: { color: '#8B98A6', fontSize: 11 }, axisLine: { lineStyle: { color: '#1F2630' } } },
+    xAxis: { type: 'category', data: dates, axisLabel: { color: '#8B98A6', fontSize: 11, formatter: v => fmtDay(v) }, axisLine: { lineStyle: { color: '#1F2630' } } },
     yAxis: { type: 'value', axisLabel: { color: '#8B98A6', fontSize: 11, formatter: fmtAxis }, splitLine: { lineStyle: { color: '#1F2630' } } },
     series,
   });
@@ -431,15 +430,32 @@ let _until = null;
 function localDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
+// Format a YYYY-MM-DD string as a short date in en-GB order (D/M) — consistent with London billing timezone.
+function fmtDay(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Intl.DateTimeFormat('en-GB', { month: 'numeric', day: 'numeric' }).format(new Date(y, m - 1, d));
+}
+// Return current calendar date/hour in London time for billing-week calculations.
+function londonDateParts(d = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/London',
+    weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(d).reduce((a, p) => ({ ...a, [p.type]: p.value }), {});
+  const WD = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const dayOfWeek = WD[parts.weekday];
+  if (dayOfWeek === undefined) throw new Error(`londonDateParts: unexpected weekday "${parts.weekday}"`);
+  return { year: +parts.year, month: +parts.month, day: +parts.day, hour: +parts.hour % 24, dayOfWeek };
+}
 function todayLabel()    { return localDate(new Date()); }
 function tomorrowLabel() { const d = new Date(); return localDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)); }
 function weekLabel() {
-  const d = new Date();
-  // getDay(): 0=Sun 1=Mon … 5=Fri 6=Sat  →  (getDay()+2)%7 = days since Friday
-  let daysSinceFri = (d.getDay() + 2) % 7;
-  // On Friday before 17:00 the new billing week hasn't opened yet — use previous Friday.
-  if (daysSinceFri === 0 && d.getHours() < 17) daysSinceFri = 7;
-  const friday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - daysSinceFri);
+  const p = londonDateParts();
+  // Billing week resets Friday 17:00 London time.
+  let daysSinceFri = (p.dayOfWeek + 2) % 7;
+  if (daysSinceFri === 0 && p.hour < 17) daysSinceFri = 7;
+  const base = new Date(p.year, p.month - 1, p.day);
+  const friday = new Date(base.getFullYear(), base.getMonth(), base.getDate() - daysSinceFri);
   const nextFri = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate() + 7);
   return { since: localDate(friday) + 'T17:00', until: localDate(nextFri) + 'T17:00' };
 }

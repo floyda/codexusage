@@ -9,16 +9,18 @@ import re
 from datetime import date, datetime, timedelta
 from importlib.resources import files
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 from .cache import scan_all_projects_cached
 from .pricing import load_pricing, tokens_to_usd, usd_to_credits
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$")
+_LONDON_TZ = ZoneInfo("Europe/London")
 
 
 def _week_bounds(now: datetime | None = None) -> tuple[str, str]:
-    """Return (since, until) for the current Fri-17:00 → Fri-17:00 billing week."""
-    dt = now or datetime.now()
+    """Return (since, until) for the current Fri-17:00 → Fri-17:00 billing week (London time)."""
+    dt = now if now is not None else datetime.now(_LONDON_TZ)
     # weekday(): Mon=0 … Fri=4 … Sun=6  →  days since last Friday
     days_since_fri = (dt.weekday() - 4) % 7
     # On Friday before 17:00 the new week hasn't started yet — use previous Friday.

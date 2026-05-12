@@ -7,6 +7,7 @@ import sys
 import webbrowser
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .cache import scan_all_projects_cached
 from .config import (
@@ -159,7 +160,7 @@ def cmd_week(args):
         label = f"{since} .. {until}"
     else:
         n = getattr(args, "weeks", None) or 1
-        now = datetime.now()
+        now = datetime.now(ZoneInfo("Europe/London"))
         days_since_fri = (now.weekday() - 4) % 7
         if days_since_fri == 0 and now.hour < 17:
             days_since_fri = 7

@@ -74,9 +74,7 @@ class TestSchemaCreation:
         conn = sqlite3.connect(str(db_path))
         tables = {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         conn.close()
         assert {"files", "events"}.issubset(tables)
