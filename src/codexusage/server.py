@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from .cache import scan_all_projects_cached
-from .pricing import load_pricing, tokens_to_usd, usd_to_credits
+from .pricing import load_pricing, tokens_to_usd, tokens_to_usd_breakdown, usd_to_credits
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$")
 _LONDON_TZ = ZoneInfo("Europe/London")
@@ -64,6 +64,9 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
                 "total_tokens": 0,
                 "usd": 0.0,
                 "credits": 0.0,
+                "input_usd": 0.0,
+                "cached_usd": 0.0,
+                "output_usd": 0.0,
             }
         d = days_map[day]
         d["input_tokens"] += e["input_tokens"]
@@ -72,12 +75,19 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
         d["total_tokens"] += e["total_tokens"]
         usd = tokens_to_usd(e["model"], e, pricing)
         d["usd"] += usd
+        parts = tokens_to_usd_breakdown(e["model"], e, pricing)
+        d["input_usd"]  += parts["input_usd"]
+        d["cached_usd"] += parts["cached_usd"]
+        d["output_usd"] += parts["output_usd"]
         if e.get("auth_type", "oauth") == "oauth":
             d["credits"] += usd_to_credits(usd, cpd)
 
     for d in days_map.values():
         d["usd"] = round(d["usd"], 4)
         d["credits"] = round(d["credits"], 4)
+        d["input_usd"]  = round(d["input_usd"],  4)
+        d["cached_usd"] = round(d["cached_usd"], 4)
+        d["output_usd"] = round(d["output_usd"], 4)
 
     # Per-day-per-model, per-day-per-project, and per-day-per-cwd breakdowns for chart drill-down
     days_model_map: dict[str, dict[str, dict]] = {}

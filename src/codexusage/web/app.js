@@ -238,10 +238,9 @@ function renderChart(days, hasOauth, hasApiToken, daysByModel, daysByProject, da
   let series;
 
   if (_chartBreakdown === 'token-type') {
-    const getM  = d => d.usd;
-    const input  = days.map(d => +(getM(d) * (d.input_tokens  / Math.max(d.total_tokens, 1))).toFixed(4));
-    const cached = days.map(d => +(getM(d) * (d.cached_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
-    const output = days.map(d => +(getM(d) * (d.output_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
+    const input  = days.map(d => +(d.input_usd  ?? 0).toFixed(4));
+    const cached = days.map(d => +(d.cached_usd ?? 0).toFixed(4));
+    const output = days.map(d => +(d.output_usd ?? 0).toFixed(4));
     series = [
       { name: 'Input',  type: 'bar', stack: 'total', data: input,  itemStyle: { color: '#4A9EFF' } },
       { name: 'Cached', type: 'bar', stack: 'total', data: cached, itemStyle: { color: '#2A5A99' } },
