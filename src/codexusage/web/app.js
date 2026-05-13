@@ -230,16 +230,15 @@ function cwdBasename(cwd) {
 }
 
 function renderChart(days, hasOauth, hasApiToken, daysByModel, daysByProject, daysByCwd) {
-  const useCredits = hasOauth && !hasApiToken;
-  const fmtVal  = v => useCredits ? v.toFixed(4) + ' cr' : '$' + v.toFixed(4);
-  const fmtAxis = v => useCredits ? v.toFixed(2) : '$' + v.toFixed(4);
-  const metric  = useCredits ? 'credits' : 'usd';
+  const fmtVal  = v => '$' + v.toFixed(4);
+  const fmtAxis = v => '$' + v.toFixed(2);
+  const metric  = 'usd';
 
   const dates = days.map(d => d.date);
   let series;
 
   if (_chartBreakdown === 'token-type') {
-    const getM  = d => useCredits ? d.credits : d.usd;
+    const getM  = d => d.usd;
     const input  = days.map(d => +(getM(d) * (d.input_tokens  / Math.max(d.total_tokens, 1))).toFixed(4));
     const cached = days.map(d => +(getM(d) * (d.cached_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
     const output = days.map(d => +(getM(d) * (d.output_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
