@@ -95,13 +95,17 @@ class TestTokensToUsdBreakdown:
         b = tokens_to_usd_breakdown("gpt-5", _event(output=1_000_000), pricing)
         assert b["input_usd"] == 0.0
         assert b["cached_usd"] == 0.0
-        assert b["output_usd"] == pytest.approx(tokens_to_usd("gpt-5", _event(output=1_000_000), pricing))
+        assert b["output_usd"] == pytest.approx(
+            tokens_to_usd("gpt-5", _event(output=1_000_000), pricing)
+        )
 
     def test_input_only(self, pricing: dict) -> None:
         b = tokens_to_usd_breakdown("gpt-5", _event(input=1_000_000), pricing)
         assert b["cached_usd"] == 0.0
         assert b["output_usd"] == 0.0
-        assert b["input_usd"] == pytest.approx(tokens_to_usd("gpt-5", _event(input=1_000_000), pricing))
+        assert b["input_usd"] == pytest.approx(
+            tokens_to_usd("gpt-5", _event(input=1_000_000), pricing)
+        )
 
     def test_cached_subset_of_input(self, pricing: dict) -> None:
         b = tokens_to_usd_breakdown("gpt-5", _event(input=1_000_000, cached=500_000), pricing)
@@ -109,7 +113,9 @@ class TestTokensToUsdBreakdown:
         assert b["cached_usd"] > 0
         assert b["cached_usd"] < b["input_usd"]  # cached rate is cheaper
         total = b["input_usd"] + b["cached_usd"] + b["output_usd"]
-        assert total == pytest.approx(tokens_to_usd("gpt-5", _event(input=1_000_000, cached=500_000), pricing))
+        assert total == pytest.approx(
+            tokens_to_usd("gpt-5", _event(input=1_000_000, cached=500_000), pricing)
+        )
 
     def test_parts_sum_to_total(self, pricing: dict) -> None:
         ev = _event(input=100_000, cached=30_000, output=20_000)

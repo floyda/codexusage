@@ -76,7 +76,7 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
         usd = tokens_to_usd(e["model"], e, pricing)
         d["usd"] += usd
         parts = tokens_to_usd_breakdown(e["model"], e, pricing)
-        d["input_usd"]  += parts["input_usd"]
+        d["input_usd"] += parts["input_usd"]
         d["cached_usd"] += parts["cached_usd"]
         d["output_usd"] += parts["output_usd"]
         if e.get("auth_type", "oauth") == "oauth":
@@ -85,7 +85,7 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
     for d in days_map.values():
         d["usd"] = round(d["usd"], 4)
         d["credits"] = round(d["credits"], 4)
-        d["input_usd"]  = round(d["input_usd"],  4)
+        d["input_usd"] = round(d["input_usd"], 4)
         d["cached_usd"] = round(d["cached_usd"], 4)
         d["output_usd"] = round(d["output_usd"], 4)
 
