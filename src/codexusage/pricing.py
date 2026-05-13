@@ -107,23 +107,34 @@ def _rates_for(model: str, pricing: dict) -> dict | None:
     return pricing.get("default")
 
 
-def tokens_to_usd(model: str, event: dict, pricing: dict) -> float:
+def _usd_parts(model: str, event: dict, pricing: dict) -> tuple[float, float, float]:
+    """Returns (input_usd, cached_usd, output_usd) for a single event."""
     rates = _rates_for(model, pricing)
     if rates is None:
-        return 0.0
+        return 0.0, 0.0, 0.0
     M = 1_000_000
-    input_tokens = event.get("input_tokens", 0)
-    cached_tokens = event.get("cached_input_tokens", 0)
+    input_tokens = event.get("input_tokens", 0) or 0
+    cached_tokens = event.get("cached_input_tokens", 0) or 0
     # Codex reports input_tokens as the total (cached is a subset). Bill the
     # non-cached portion at the input rate and the cached portion at the
     # discounted cached rate, mirroring ccusage's calculateCostUSD.
     non_cached = max(input_tokens - cached_tokens, 0)
     cached = min(cached_tokens, input_tokens)
     return (
-        non_cached * rates["input"]
-        + cached * rates["cached_input"]
-        + event.get("output_tokens", 0) * rates["output"]
-    ) / M
+        non_cached * rates["input"] / M,
+        cached * rates["cached_input"] / M,
+        (event.get("output_tokens", 0) or 0) * rates["output"] / M,
+    )
+
+
+def tokens_to_usd(model: str, event: dict, pricing: dict) -> float:
+    return sum(_usd_parts(model, event, pricing))
+
+
+def tokens_to_usd_breakdown(model: str, event: dict, pricing: dict) -> dict[str, float]:
+    """Returns {"input_usd": float, "cached_usd": float, "output_usd": float}."""
+    i, c, o = _usd_parts(model, event, pricing)
+    return {"input_usd": i, "cached_usd": c, "output_usd": o}
 
 
 def usd_to_credits(usd: float, credits_per_dollar: float) -> float:

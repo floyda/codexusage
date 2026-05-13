@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from codexusage.pricing import _load_bundled, _rates_for, tokens_to_usd, usd_to_credits
+from codexusage.pricing import (
+    _load_bundled,
+    _rates_for,
+    tokens_to_usd,
+    tokens_to_usd_breakdown,
+    usd_to_credits,
+)
 
 
 @pytest.fixture(scope="module")
@@ -82,6 +88,44 @@ class TestTokensToUsd:
     def test_o3_is_more_expensive_than_gpt4o(self, pricing: dict) -> None:
         ev = _event(input=100_000, output=100_000)
         assert tokens_to_usd("o3", ev, pricing) > tokens_to_usd("gpt-4o", ev, pricing)
+
+
+class TestTokensToUsdBreakdown:
+    def test_output_only(self, pricing: dict) -> None:
+        b = tokens_to_usd_breakdown("gpt-5", _event(output=1_000_000), pricing)
+        assert b["input_usd"] == 0.0
+        assert b["cached_usd"] == 0.0
+        assert b["output_usd"] == pytest.approx(
+            tokens_to_usd("gpt-5", _event(output=1_000_000), pricing)
+        )
+
+    def test_input_only(self, pricing: dict) -> None:
+        b = tokens_to_usd_breakdown("gpt-5", _event(input=1_000_000), pricing)
+        assert b["cached_usd"] == 0.0
+        assert b["output_usd"] == 0.0
+        assert b["input_usd"] == pytest.approx(
+            tokens_to_usd("gpt-5", _event(input=1_000_000), pricing)
+        )
+
+    def test_cached_subset_of_input(self, pricing: dict) -> None:
+        b = tokens_to_usd_breakdown("gpt-5", _event(input=1_000_000, cached=500_000), pricing)
+        assert b["input_usd"] > 0
+        assert b["cached_usd"] > 0
+        assert b["cached_usd"] < b["input_usd"]  # cached rate is cheaper
+        total = b["input_usd"] + b["cached_usd"] + b["output_usd"]
+        assert total == pytest.approx(
+            tokens_to_usd("gpt-5", _event(input=1_000_000, cached=500_000), pricing)
+        )
+
+    def test_parts_sum_to_total(self, pricing: dict) -> None:
+        ev = _event(input=100_000, cached=30_000, output=20_000)
+        b = tokens_to_usd_breakdown("gpt-5", ev, pricing)
+        total = b["input_usd"] + b["cached_usd"] + b["output_usd"]
+        assert total == pytest.approx(tokens_to_usd("gpt-5", ev, pricing))
+
+    def test_zero_event(self, pricing: dict) -> None:
+        b = tokens_to_usd_breakdown("gpt-5", _event(), pricing)
+        assert b == {"input_usd": 0.0, "cached_usd": 0.0, "output_usd": 0.0}
 
 
 class TestUsdToCredits:

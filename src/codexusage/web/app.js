@@ -230,19 +230,17 @@ function cwdBasename(cwd) {
 }
 
 function renderChart(days, hasOauth, hasApiToken, daysByModel, daysByProject, daysByCwd) {
-  const useCredits = hasOauth && !hasApiToken;
-  const fmtVal  = v => useCredits ? v.toFixed(4) + ' cr' : '$' + v.toFixed(4);
-  const fmtAxis = v => useCredits ? v.toFixed(2) : '$' + v.toFixed(4);
-  const metric  = useCredits ? 'credits' : 'usd';
+  const fmtVal  = v => '$' + v.toFixed(4);
+  const fmtAxis = v => '$' + v.toFixed(2);
+  const metric  = 'usd';
 
   const dates = days.map(d => d.date);
   let series;
 
   if (_chartBreakdown === 'token-type') {
-    const getM  = d => useCredits ? d.credits : d.usd;
-    const input  = days.map(d => +(getM(d) * (d.input_tokens  / Math.max(d.total_tokens, 1))).toFixed(4));
-    const cached = days.map(d => +(getM(d) * (d.cached_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
-    const output = days.map(d => +(getM(d) * (d.output_tokens / Math.max(d.total_tokens, 1))).toFixed(4));
+    const input  = days.map(d => +(d.input_usd  ?? 0).toFixed(4));
+    const cached = days.map(d => +(d.cached_usd ?? 0).toFixed(4));
+    const output = days.map(d => +(d.output_usd ?? 0).toFixed(4));
     series = [
       { name: 'Input',  type: 'bar', stack: 'total', data: input,  itemStyle: { color: '#4A9EFF' } },
       { name: 'Cached', type: 'bar', stack: 'total', data: cached, itemStyle: { color: '#2A5A99' } },
