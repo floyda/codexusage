@@ -346,6 +346,40 @@ class TestScanAllProjects:
         events = scan_all_projects(projects)
         assert events[0]["project"] == "proj-a"
 
+    def test_cwd_root_resolved_for_worktree(self, tmp_path: Path) -> None:
+        # Build a real .git worktree structure so _resolve_git_repo_root works
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        main_repo = tmp_path / "main"
+        worktrees_dir = main_repo / ".git" / "worktrees" / "wt"
+        worktrees_dir.mkdir(parents=True)
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+        (worktree / ".git").write_text(f"gitdir: {worktrees_dir}\n", encoding="utf-8")
+
+        _session_with_cwd(sessions, "session.jsonl", str(worktree))
+        projects = [{"name": "p", "sessions_dir": str(sessions), "auth_type": "oauth", "repos": []}]
+        events = scan_all_projects(projects)
+        assert events[0]["cwd_root"] == str(main_repo)
+
+    def test_cwd_root_unchanged_for_normal_repo(self, tmp_path: Path) -> None:
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+
+        _session_with_cwd(sessions, "session.jsonl", str(repo))
+        projects = [{"name": "p", "sessions_dir": str(sessions), "auth_type": "oauth", "repos": []}]
+        events = scan_all_projects(projects)
+        assert events[0]["cwd_root"] == str(repo)
+
+    def test_cwd_root_absent_when_cwd_is_none(self, tmp_path: Path) -> None:
+        f = tmp_path / "session.jsonl"
+        f.write_text(_make_jsonl(_token_event("2024-06-01T10:00:00Z", input=10, output=5)))
+        projects = [{"name": "p", "sessions_dir": str(tmp_path), "auth_type": "oauth", "repos": []}]
+        events = scan_all_projects(projects)
+        assert "cwd_root" not in events[0]
+
 
 class TestResolveGitRepoRoot:
     def test_normal_repo_returns_root(self, tmp_path: Path) -> None:

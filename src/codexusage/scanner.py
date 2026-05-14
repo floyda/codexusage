@@ -7,6 +7,7 @@ No database — scans files fresh on every call.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 
@@ -212,7 +213,7 @@ def _resolve_git_repo_root(path: str) -> str | None:
                 if content.startswith("gitdir:"):
                     gitdir = Path(content[len("gitdir:") :].strip())
                     if not gitdir.is_absolute():
-                        gitdir = (candidate / gitdir).resolve()
+                        gitdir = Path(os.path.normpath(candidate / gitdir))
                     # gitdir is .git/worktrees/<name> — two levels up is the main .git
                     main_git = gitdir.parent.parent
                     if main_git.name == ".git":
@@ -246,6 +247,25 @@ def _assign_project(cwd: str | None, group: list[dict]) -> dict:
     return group[0]
 
 
+def _annotate_events(
+    events: list[dict], group: list[dict], root_cache: dict[str, str | None]
+) -> None:
+    """Tag each event with project, auth_type, and cwd_root (in-place).
+
+    root_cache is shared across calls within a scan run to avoid redundant
+    filesystem reads for the same cwd.
+    """
+    for e in events:
+        proj = _assign_project(e.get("cwd"), group)
+        e["project"] = proj["name"]
+        e["auth_type"] = proj.get("auth_type", "oauth")
+        cwd = e.get("cwd")
+        if cwd:
+            if cwd not in root_cache:
+                root_cache[cwd] = _resolve_git_repo_root(cwd)
+            e["cwd_root"] = root_cache[cwd] or cwd
+
+
 def scan_all_projects(projects: list[dict]) -> list[dict]:
     """Scan all projects and tag each event with project name and auth_type.
 
@@ -261,19 +281,11 @@ def scan_all_projects(projects: list[dict]) -> list[dict]:
         groups[proj["sessions_dir"]].append(proj)
 
     all_events: list[dict] = []
-    _root_cache: dict[str, str | None] = {}
+    root_cache: dict[str, str | None] = {}
 
     for sessions_dir, group in groups.items():
         events = scan_sessions(sessions_dir)
-        for e in events:
-            proj = _assign_project(e.get("cwd"), group)
-            e["project"] = proj["name"]
-            e["auth_type"] = proj.get("auth_type", "oauth")
-            cwd = e.get("cwd")
-            if cwd:
-                if cwd not in _root_cache:
-                    _root_cache[cwd] = _resolve_git_repo_root(cwd)
-                e["cwd_root"] = _root_cache[cwd] or cwd
+        _annotate_events(events, group, root_cache)
         all_events.extend(events)
 
     all_events.sort(key=lambda e: e["timestamp"])
