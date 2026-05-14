@@ -628,15 +628,15 @@ async function renderOverview(app) {
 
 async function renderSessionsRoute(app) {
   const d = new Date();
-  const today   = localDate(d);
-  const weekAgo = localDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7));
+  const weekAgo  = localDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - 7));
+  const tomorrow = tomorrowLabel();
 
   app.innerHTML = `
     <div class="card">
       <h2>Sessions</h2>
       <div class="filter-row">
         <label>From <input type="date" id="since-input" value="${weekAgo}"></label>
-        <label>To   <input type="date" id="until-input" value="${today}"></label>
+        <label>To   <input type="date" id="until-input" value="${tomorrow}"></label>
         <button id="filter-btn">Apply</button>
       </div>
       <div id="sessions-table"><p class="muted">Loading…</p></div>
@@ -644,7 +644,7 @@ async function renderSessionsRoute(app) {
 
   async function load() {
     const since = $('#since-input').value || weekAgo;
-    const until = $('#until-input').value || today;
+    const until = $('#until-input').value || tomorrow;
     try {
       const data = await api(`/api/sessions?since=${since}&until=${until}`);
       const tbl = $('#sessions-table');
