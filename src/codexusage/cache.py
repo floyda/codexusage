@@ -8,7 +8,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from .config import _config_path
-from .scanner import _assign_project, _parse_file, scan_all_projects
+from .scanner import _annotate_events, _parse_file, scan_all_projects
 
 _LOG = logging.getLogger(__name__)
 
@@ -157,12 +157,11 @@ def scan_all_projects_cached(projects: list[dict]) -> list[dict]:
             groups[proj["sessions_dir"]].append(proj)
 
         all_events: list[dict] = []
+        root_cache: dict[str, str | None] = {}
+
         for sessions_dir, group in groups.items():
             events = _scan_sessions_cached(sessions_dir, conn)
-            for e in events:
-                proj = _assign_project(e.get("cwd"), group)
-                e["project"] = proj["name"]
-                e["auth_type"] = proj.get("auth_type", "oauth")
+            _annotate_events(events, group, root_cache)
             all_events.extend(events)
 
         all_events.sort(key=lambda e: e["timestamp"])
