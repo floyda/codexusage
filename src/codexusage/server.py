@@ -87,7 +87,7 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
         day = e["timestamp"][:10]
         m = e["model"]
         proj = e.get("project", "default")
-        cwd = e.get("cwd") or "unknown"
+        cwd = e.get("cwd_root") or e.get("cwd") or "unknown"
         usd = tokens_to_usd(m, e, pricing)
         credits = usd_to_credits(usd, cpd) if e.get("auth_type", "oauth") == "oauth" else 0.0
         for mapping, key in ((days_model_map, m), (days_project_map, proj), (days_cwd_map, cwd)):
@@ -174,7 +174,7 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
                 "credits": 0.0,
                 "project": e.get("project", "default"),
                 "reasoning_effort": e.get("reasoning_effort"),
-                "cwd": e.get("cwd"),
+                "cwd": e.get("cwd_root") or e.get("cwd"),
             }
         s = sessions_map[sid]
         s["events"] += 1

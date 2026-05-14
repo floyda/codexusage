@@ -195,16 +195,54 @@ def scan_sessions(sessions_dir: str) -> list[dict]:
     return all_events
 
 
+def _resolve_git_repo_root(path: str) -> str | None:
+    """Return the main repo root for path, resolving git worktrees transparently.
+
+    Walks up from path looking for .git. If .git is a file (worktree), reads
+    the gitdir pointer and resolves it back to the main repo root. If .git is
+    a directory (normal repo), returns that directory's parent. Returns None
+    if path is not inside any git repo.
+    """
+    p = Path(path)
+    for candidate in [p, *p.parents]:
+        git_entry = candidate / ".git"
+        try:
+            if git_entry.is_file():
+                content = git_entry.read_text(encoding="utf-8").strip()
+                if content.startswith("gitdir:"):
+                    gitdir = Path(content[len("gitdir:") :].strip())
+                    if not gitdir.is_absolute():
+                        gitdir = (candidate / gitdir).resolve()
+                    # gitdir is .git/worktrees/<name> — two levels up is the main .git
+                    main_git = gitdir.parent.parent
+                    if main_git.name == ".git":
+                        return str(main_git.parent)
+            elif git_entry.is_dir():
+                return str(candidate)
+        except OSError:
+            pass
+    return None
+
+
 def _assign_project(cwd: str | None, group: list[dict]) -> dict:
     """Return the project from group that best matches cwd via repos prefix."""
     if len(group) == 1:
         return group[0]
     if cwd:
+        # Direct prefix match (fast path — no filesystem I/O)
         for proj in group:
             for repo in proj.get("repos", []):
                 prefix = repo.rstrip("/")
                 if cwd == prefix or cwd.startswith(prefix + "/"):
                     return proj
+        # Fallback: resolve worktrees to their main repo root and retry
+        resolved = _resolve_git_repo_root(cwd)
+        if resolved and resolved != cwd:
+            for proj in group:
+                for repo in proj.get("repos", []):
+                    prefix = repo.rstrip("/")
+                    if resolved == prefix or resolved.startswith(prefix + "/"):
+                        return proj
     return group[0]
 
 
@@ -223,12 +261,19 @@ def scan_all_projects(projects: list[dict]) -> list[dict]:
         groups[proj["sessions_dir"]].append(proj)
 
     all_events: list[dict] = []
+    _root_cache: dict[str, str | None] = {}
+
     for sessions_dir, group in groups.items():
         events = scan_sessions(sessions_dir)
         for e in events:
             proj = _assign_project(e.get("cwd"), group)
             e["project"] = proj["name"]
             e["auth_type"] = proj.get("auth_type", "oauth")
+            cwd = e.get("cwd")
+            if cwd:
+                if cwd not in _root_cache:
+                    _root_cache[cwd] = _resolve_git_repo_root(cwd)
+                e["cwd_root"] = _root_cache[cwd] or cwd
         all_events.extend(events)
 
     all_events.sort(key=lambda e: e["timestamp"])

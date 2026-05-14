@@ -10,6 +10,7 @@ from codexusage.scanner import (
     _ensure_int,
     _normalize_usage,
     _parse_file,
+    _resolve_git_repo_root,
     _subtract_usage,
     scan_all_projects,
     scan_sessions,
@@ -344,3 +345,67 @@ class TestScanAllProjects:
         ]
         events = scan_all_projects(projects)
         assert events[0]["project"] == "proj-a"
+
+
+class TestResolveGitRepoRoot:
+    def test_normal_repo_returns_root(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        assert _resolve_git_repo_root(str(tmp_path)) == str(tmp_path)
+
+    def test_subdir_of_normal_repo(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        subdir = tmp_path / "src" / "foo"
+        subdir.mkdir(parents=True)
+        assert _resolve_git_repo_root(str(subdir)) == str(tmp_path)
+
+    def test_worktree_root_resolves_to_main(self, tmp_path: Path) -> None:
+        main_repo = tmp_path / "main"
+        worktrees_dir = main_repo / ".git" / "worktrees" / "my-branch"
+        worktrees_dir.mkdir(parents=True)
+
+        worktree = tmp_path / "my-branch"
+        worktree.mkdir()
+        (worktree / ".git").write_text(f"gitdir: {worktrees_dir}\n", encoding="utf-8")
+
+        assert _resolve_git_repo_root(str(worktree)) == str(main_repo)
+
+    def test_worktree_subdir_resolves_to_main(self, tmp_path: Path) -> None:
+        main_repo = tmp_path / "main"
+        worktrees_dir = main_repo / ".git" / "worktrees" / "my-branch"
+        worktrees_dir.mkdir(parents=True)
+
+        worktree = tmp_path / "my-branch"
+        subdir = worktree / "src" / "pkg"
+        subdir.mkdir(parents=True)
+        (worktree / ".git").write_text(f"gitdir: {worktrees_dir}\n", encoding="utf-8")
+
+        assert _resolve_git_repo_root(str(subdir)) == str(main_repo)
+
+    def test_non_git_dir_returns_none(self, tmp_path: Path) -> None:
+        assert _resolve_git_repo_root(str(tmp_path)) is None
+
+
+class TestAssignProjectWorktree:
+    def _make_worktree(self, tmp_path: Path, name: str = "wt") -> tuple[Path, Path]:
+        """Return (main_repo_path, worktree_path) with a valid .git file."""
+        main_repo = tmp_path / "main"
+        worktrees_dir = main_repo / ".git" / "worktrees" / name
+        worktrees_dir.mkdir(parents=True)
+        worktree = tmp_path / name
+        worktree.mkdir()
+        (worktree / ".git").write_text(f"gitdir: {worktrees_dir}\n", encoding="utf-8")
+        return main_repo, worktree
+
+    def test_worktree_cwd_matches_main_repo(self, tmp_path: Path) -> None:
+        main_repo, worktree = self._make_worktree(tmp_path)
+        proj_a = {"name": "a", "repos": [str(main_repo)]}
+        proj_b = {"name": "b", "repos": []}
+        assert _assign_project(str(worktree), [proj_a, proj_b])["name"] == "a"
+
+    def test_worktree_subdir_cwd_matches_main_repo(self, tmp_path: Path) -> None:
+        main_repo, worktree = self._make_worktree(tmp_path)
+        subdir = worktree / "src"
+        subdir.mkdir()
+        proj_a = {"name": "a", "repos": [str(main_repo)]}
+        proj_b = {"name": "b", "repos": []}
+        assert _assign_project(str(subdir), [proj_a, proj_b])["name"] == "a"
