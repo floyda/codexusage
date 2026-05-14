@@ -12,6 +12,9 @@ from .scanner import _annotate_events, _parse_file, scan_all_projects
 
 _LOG = logging.getLogger(__name__)
 
+# Bump when columns are added/removed so existing caches rebuild automatically.
+_SCHEMA_VERSION = 2
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS files (
     path TEXT PRIMARY KEY,
@@ -30,7 +33,10 @@ CREATE TABLE IF NOT EXISTS events (
     reasoning_output_tokens INTEGER NOT NULL,
     total_tokens INTEGER NOT NULL,
     reasoning_effort TEXT,
-    cwd TEXT
+    cwd TEXT,
+    thread_source TEXT,
+    parent_session_uuid TEXT,
+    agent_nickname TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_path ON events(path);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
@@ -40,7 +46,8 @@ _INSERT_FILE = "INSERT OR REPLACE INTO files (path, mtime, size) VALUES (?, ?, ?
 _INSERT_EVENT = (
     "INSERT INTO events (path, session_id, timestamp, model, input_tokens, "
     "cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, "
-    "reasoning_effort, cwd) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "reasoning_effort, cwd, thread_source, parent_session_uuid, agent_nickname) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
@@ -54,6 +61,10 @@ def _open_db(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version != _SCHEMA_VERSION:
+        conn.executescript("DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS files;")
+        conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
     conn.executescript(_DDL)
     return conn
 
@@ -106,6 +117,9 @@ def _scan_sessions_cached(sessions_dir: str, conn: sqlite3.Connection) -> list[d
                             e["total_tokens"],
                             e["reasoning_effort"],
                             e["cwd"],
+                            e.get("thread_source"),
+                            e.get("parent_session_uuid"),
+                            e.get("agent_nickname"),
                         )
                         for e in events
                     ],
@@ -121,7 +135,8 @@ def _scan_sessions_cached(sessions_dir: str, conn: sqlite3.Connection) -> list[d
     placeholders = ",".join("?" * len(current))
     rows = conn.execute(
         f"SELECT session_id, timestamp, model, input_tokens, cached_input_tokens, "
-        f"output_tokens, reasoning_output_tokens, total_tokens, reasoning_effort, cwd "
+        f"output_tokens, reasoning_output_tokens, total_tokens, reasoning_effort, cwd, "
+        f"thread_source, parent_session_uuid, agent_nickname "
         f"FROM events WHERE path IN ({placeholders})",
         list(current),
     ).fetchall()
@@ -138,6 +153,9 @@ def _scan_sessions_cached(sessions_dir: str, conn: sqlite3.Connection) -> list[d
             "total_tokens": row[7],
             "reasoning_effort": row[8],
             "cwd": row[9],
+            "thread_source": row[10],
+            "parent_session_uuid": row[11],
+            "agent_nickname": row[12],
         }
         for row in rows
     ]

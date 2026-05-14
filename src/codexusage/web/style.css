@@ -160,6 +160,19 @@ td.mono { font-family: var(--mono); color: var(--muted); font-size: 12px; }
 .toggle-btn:hover { color: var(--text); border-color: var(--border-2); }
 .toggle-btn.active { color: var(--text); background: rgba(74,158,255,0.12); border-color: var(--accent); }
 
+/* session expand/collapse */
+.expand-btn {
+  background: none; border: none; cursor: pointer; padding: 0 3px 0 0;
+  color: var(--muted); font-size: 9px; line-height: 1; vertical-align: middle;
+  transition: color 100ms;
+}
+.expand-btn:hover { color: var(--text); }
+.expand-spacer { display: inline-block; width: 13px; }
+.session-id-cell { white-space: nowrap; }
+.subagent-row td { background: var(--panel-2); }
+.subagent-row:hover td { background: color-mix(in srgb, var(--panel-2) 80%, var(--accent) 20%); }
+.sub-indent { padding-left: 28px !important; color: var(--muted); }
+
 /* sessions tab */
 .filter-row { display: flex; gap: 8px; align-items: center; margin-bottom: 14px; }
 .filter-row label { color: var(--muted); font-size: 12px; }

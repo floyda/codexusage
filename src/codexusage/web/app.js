@@ -378,37 +378,89 @@ function renderEffortTable(effort_levels, hasOauth) {
 // ── Sessions table ────────────────────────────────────────────────────────────
 function renderSessionsTable(sessions) {
   if (!sessions.length) return '<p class="muted">No sessions.</p>';
+  const hasSubagents = sessions.some(s => s.subagents && s.subagents.length > 0);
   const multiProject = sessions.some(s => s.project && s.project !== 'default');
   const hasEffort    = sessions.some(s => s.reasoning_effort);
   const hasCwd       = sessions.some(s => s.cwd);
-  const projHead = multiProject ? '<th>Project</th>' : '';
-  const effHead  = hasEffort    ? '<th>Effort</th>'  : '';
-  const cwdHead  = hasCwd       ? '<th>Repo</th>'    : '';
-  const rows = sessions.map(s => {
+  const projHead  = multiProject  ? '<th>Project</th>' : '';
+  const effHead   = hasEffort     ? '<th>Effort</th>'  : '';
+  const cwdHead   = hasCwd        ? '<th>Repo</th>'    : '';
+  const totalHead = hasSubagents  ? '<th class="num">Total USD</th><th class="num">Total Cr</th>' : '';
+
+  function sessionRow(s, isChild) {
     const projCell = multiProject ? `<td class="mono" style="font-size:11px">${s.project || '—'}</td>` : '';
     const effCell  = hasEffort    ? `<td>${fmt.effortBadge(s.reasoning_effort)}</td>` : '';
     const cwdCell  = hasCwd       ? `<td class="mono" style="font-size:11px" title="${s.cwd || ''}">${cwdBasename(s.cwd)}</td>` : '';
-    return `<tr>
-      <td class="mono">${fmt.short(s.session_id)}</td>
+    const ownUsd     = s.own_usd     != null ? s.own_usd     : s.usd;
+    const ownCredits = s.own_credits != null ? s.own_credits : s.credits;
+
+    if (isChild) {
+      const label = s.agent_nickname || fmt.short(s.session_id);
+      const totalCols = hasSubagents ? '<td class="num">—</td><td class="num">—</td>' : '';
+      return `<tr class="subagent-row" data-parent="${s._parent_sid}" style="display:none">
+        <td class="mono sub-indent">↳ ${label}</td>
+        <td class="mono">${fmt.ts(s.last_timestamp)}</td>
+        ${projCell}${effCell}${cwdCell}
+        <td class="num">${s.events}</td>
+        <td class="num">${fmt.int(s.total_tokens)}</td>
+        <td class="num">${fmt.usd(ownUsd)}</td>
+        <td class="num">${fmt.cr(ownCredits)}</td>
+        ${totalCols}
+      </tr>`;
+    }
+
+    const hasKids   = s.subagents && s.subagents.length > 0;
+    const expandBtn = hasKids
+      ? `<button class="expand-btn" data-sid="${s.session_id}" title="Show subagents">▶</button>`
+      : (hasSubagents ? '<span class="expand-spacer"></span>' : '');
+    const totalCols = hasSubagents
+      ? `<td class="num">${fmt.usd(s.total_usd != null ? s.total_usd : ownUsd)}</td><td class="num">${fmt.cr(s.total_credits != null ? s.total_credits : ownCredits)}</td>`
+      : '';
+    return `<tr class="${hasKids ? 'parent-row' : ''}">
+      <td class="mono session-id-cell">${expandBtn} ${fmt.short(s.session_id)}</td>
       <td class="mono">${fmt.ts(s.last_timestamp)}</td>
-      ${projCell}
-      ${effCell}
-      ${cwdCell}
+      ${projCell}${effCell}${cwdCell}
       <td class="num">${s.events}</td>
       <td class="num">${fmt.int(s.total_tokens)}</td>
-      <td class="num">${fmt.usd(s.usd)}</td>
-      <td class="num">${fmt.cr(s.credits)}</td>
+      <td class="num">${fmt.usd(ownUsd)}</td>
+      <td class="num">${fmt.cr(ownCredits)}</td>
+      ${totalCols}
     </tr>`;
-  }).join('');
+  }
+
+  const rows = [];
+  for (const s of sessions) {
+    rows.push(sessionRow(s, false));
+    if (s.subagents) {
+      for (const c of s.subagents) {
+        c._parent_sid = s.session_id;
+        rows.push(sessionRow(c, true));
+      }
+    }
+  }
+
   return `
     <table>
       <thead><tr>
         <th>Session</th><th>Date</th>${projHead}${effHead}${cwdHead}
         <th class="num">Events</th><th class="num">Tokens</th>
-        <th class="num">USD</th><th class="num">Credits</th>
+        <th class="num">USD</th><th class="num">Credits</th>${totalHead}
       </tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody>${rows.join('')}</tbody>
     </table>`;
+}
+
+function initExpandButtons(container) {
+  (container || document).querySelectorAll('.expand-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const sid = btn.dataset.sid;
+      const open = btn.textContent.trim() === '▼';
+      btn.textContent = open ? '▶' : '▼';
+      btn.title = open ? 'Show subagents' : 'Hide subagents';
+      (container || document).querySelectorAll(`.subagent-row[data-parent="${sid}"]`)
+        .forEach(r => { r.style.display = open ? 'none' : ''; });
+    });
+  });
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -546,6 +598,7 @@ function _paintOverview(app, cfgProjects) {
   renderChart(days, has_oauth, has_api_token, days_by_model, days_by_project, days_by_cwd);
   initOverviewControls();
   initChartToggles(app, cfgProjects);
+  initExpandButtons(app);
   if (multiProject) initProjectPills(app, cfgProjects);
 }
 
@@ -594,7 +647,9 @@ async function renderSessionsRoute(app) {
     const until = $('#until-input').value || today;
     try {
       const data = await api(`/api/sessions?since=${since}&until=${until}`);
-      $('#sessions-table').innerHTML = renderSessionsTable(data.sessions);
+      const tbl = $('#sessions-table');
+      tbl.innerHTML = renderSessionsTable(data.sessions);
+      initExpandButtons(tbl);
     } catch (e) {
       $('#sessions-table').innerHTML = `<p style="color:var(--bad)">Error: ${e.message}</p>`;
     }

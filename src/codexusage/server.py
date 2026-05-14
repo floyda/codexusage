@@ -185,6 +185,9 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
                 "project": e.get("project", "default"),
                 "reasoning_effort": e.get("reasoning_effort"),
                 "cwd": e.get("cwd_root") or e.get("cwd"),
+                "thread_source": e.get("thread_source"),
+                "parent_session_uuid": e.get("parent_session_uuid"),
+                "agent_nickname": e.get("agent_nickname"),
             }
         s = sessions_map[sid]
         s["events"] += 1
@@ -201,8 +204,37 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
     for s in sessions_map.values():
         s["usd"] = round(s["usd"], 4)
         s["credits"] = round(s["credits"], 4)
+        s["own_usd"] = s["usd"]
+        s["own_credits"] = s["credits"]
+        s["total_usd"] = s["usd"]
+        s["total_credits"] = s["credits"]
 
-    sessions = sorted(sessions_map.values(), key=lambda x: x["last_timestamp"], reverse=True)
+    # Link subagent sessions to their parent by matching parent_session_uuid against
+    # session_id suffixes (UUIDs are always 36 chars at the end of the session filename).
+    uuid_to_sid = {sid[-36:]: sid for sid in sessions_map if len(sid) >= 36}
+    for sid, sess in sessions_map.items():
+        puuid = sess.get("parent_session_uuid")
+        if puuid and puuid in uuid_to_sid:
+            parent_sid = uuid_to_sid[puuid]
+            if parent_sid != sid and parent_sid in sessions_map:
+                sessions_map[parent_sid].setdefault("subagents", []).append(sess)
+                sess["_is_child"] = True
+
+    # Roll up subagent costs into parent totals and sort subagent lists by time.
+    for sess in sessions_map.values():
+        kids = sess.get("subagents")
+        if kids:
+            kids.sort(key=lambda x: x["last_timestamp"])
+            sess["total_usd"] = round(sess["own_usd"] + sum(c["own_usd"] for c in kids), 4)
+            sess["total_credits"] = round(
+                sess["own_credits"] + sum(c["own_credits"] for c in kids), 4
+            )
+
+    sessions = sorted(
+        [s for s in sessions_map.values() if not s.get("_is_child")],
+        key=lambda x: x["last_timestamp"],
+        reverse=True,
+    )
 
     # Per-project
     project_repos: dict[str, list[str]] = {

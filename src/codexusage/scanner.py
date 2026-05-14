@@ -89,6 +89,9 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
     current_effort: str | None = None
     previous_totals: dict | None = None
     session_cwd: str | None = None
+    session_thread_source: str | None = None
+    session_parent_uuid: str | None = None
+    session_agent_nickname: str | None = None
 
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -114,6 +117,21 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
             cwd = payload.get("cwd")
             if isinstance(cwd, str) and cwd.strip():
                 session_cwd = cwd.strip()
+            ts = payload.get("thread_source")
+            if isinstance(ts, str) and ts.strip():
+                session_thread_source = ts.strip()
+            source = payload.get("source")
+            if isinstance(source, dict):
+                subagent = source.get("subagent")
+                if isinstance(subagent, dict):
+                    spawn = subagent.get("thread_spawn")
+                    if isinstance(spawn, dict):
+                        pid = spawn.get("parent_thread_id")
+                        if isinstance(pid, str) and pid.strip():
+                            session_parent_uuid = pid.strip()
+                        nick = spawn.get("agent_nickname")
+                        if isinstance(nick, str) and nick.strip():
+                            session_agent_nickname = nick.strip()
             continue
 
         if entry_type == "turn_context":
@@ -171,6 +189,9 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
                 "total_tokens": raw["total_tokens"],
                 "reasoning_effort": event_effort,
                 "cwd": session_cwd,
+                "thread_source": session_thread_source,
+                "parent_session_uuid": session_parent_uuid,
+                "agent_nickname": session_agent_nickname,
             }
         )
 
