@@ -92,6 +92,8 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
     session_thread_source: str | None = None
     session_parent_uuid: str | None = None
     session_agent_nickname: str | None = None
+    session_git_branch: str | None = None
+    session_git_repo: str | None = None
 
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -132,6 +134,17 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
                         nick = spawn.get("agent_nickname")
                         if isinstance(nick, str) and nick.strip():
                             session_agent_nickname = nick.strip()
+            git = payload.get("git")
+            if isinstance(git, dict):
+                branch = git.get("branch")
+                if isinstance(branch, str) and branch.strip():
+                    session_git_branch = branch.strip()
+                repo_url = git.get("repository_url") or git.get("remote_url")
+                if isinstance(repo_url, str) and repo_url.strip():
+                    repo_name = repo_url.rstrip("/").split("/")[-1]
+                    if repo_name.endswith(".git"):
+                        repo_name = repo_name[:-4]
+                    session_git_repo = repo_name
             continue
 
         if entry_type == "turn_context":
@@ -192,6 +205,8 @@ def _parse_file(path: Path, session_id: str) -> list[dict]:
                 "thread_source": session_thread_source,
                 "parent_session_uuid": session_parent_uuid,
                 "agent_nickname": session_agent_nickname,
+                "git_branch": session_git_branch,
+                "git_repo": session_git_repo,
             }
         )
 

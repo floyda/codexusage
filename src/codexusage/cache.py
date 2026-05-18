@@ -13,9 +13,10 @@ from .scanner import _annotate_events, _parse_file, scan_all_projects
 _LOG = logging.getLogger(__name__)
 
 # Bump when columns are added/removed so existing caches rebuild automatically.
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 _DDL = """
+CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS files (
     path TEXT PRIMARY KEY,
     mtime REAL NOT NULL,
@@ -36,7 +37,9 @@ CREATE TABLE IF NOT EXISTS events (
     cwd TEXT,
     thread_source TEXT,
     parent_session_uuid TEXT,
-    agent_nickname TEXT
+    agent_nickname TEXT,
+    git_branch TEXT,
+    git_repo TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_path ON events(path);
 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
@@ -46,8 +49,8 @@ _INSERT_FILE = "INSERT OR REPLACE INTO files (path, mtime, size) VALUES (?, ?, ?
 _INSERT_EVENT = (
     "INSERT INTO events (path, session_id, timestamp, model, input_tokens, "
     "cached_input_tokens, output_tokens, reasoning_output_tokens, total_tokens, "
-    "reasoning_effort, cwd, thread_source, parent_session_uuid, agent_nickname) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "reasoning_effort, cwd, thread_source, parent_session_uuid, agent_nickname, "
+    "git_branch, git_repo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 )
 
 
@@ -58,15 +61,32 @@ def cache_path() -> Path:
 
 def _open_db(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        _maybe_wipe(path)
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
-    version = conn.execute("PRAGMA user_version").fetchone()[0]
-    if version != _SCHEMA_VERSION:
-        conn.executescript("DROP TABLE IF EXISTS events; DROP TABLE IF EXISTS files;")
-        conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
     conn.executescript(_DDL)
+    conn.execute("INSERT OR IGNORE INTO schema_version (version) VALUES (?)", (_SCHEMA_VERSION,))
+    conn.commit()
     return conn
+
+
+def _maybe_wipe(path: Path) -> None:
+    """Delete the DB file if its schema version doesn't match."""
+    try:
+        tmp = sqlite3.connect(str(path))
+        try:
+            row = tmp.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+            stale = row is None or row[0] != _SCHEMA_VERSION
+        except sqlite3.OperationalError:
+            stale = True
+        finally:
+            tmp.close()
+    except Exception:
+        stale = True
+    if stale:
+        path.unlink(missing_ok=True)
 
 
 def _scan_sessions_cached(sessions_dir: str, conn: sqlite3.Connection) -> list[dict]:
@@ -120,6 +140,8 @@ def _scan_sessions_cached(sessions_dir: str, conn: sqlite3.Connection) -> list[d
                             e.get("thread_source"),
                             e.get("parent_session_uuid"),
                             e.get("agent_nickname"),
+                            e.get("git_branch"),
+                            e.get("git_repo"),
                         )
                         for e in events
                     ],
@@ -136,7 +158,7 @@ def _scan_sessions_cached(sessions_dir: str, conn: sqlite3.Connection) -> list[d
     rows = conn.execute(
         f"SELECT session_id, timestamp, model, input_tokens, cached_input_tokens, "
         f"output_tokens, reasoning_output_tokens, total_tokens, reasoning_effort, cwd, "
-        f"thread_source, parent_session_uuid, agent_nickname "
+        f"thread_source, parent_session_uuid, agent_nickname, git_branch, git_repo "
         f"FROM events WHERE path IN ({placeholders})",
         list(current),
     ).fetchall()
@@ -156,6 +178,8 @@ def _scan_sessions_cached(sessions_dir: str, conn: sqlite3.Connection) -> list[d
             "thread_source": row[10],
             "parent_session_uuid": row[11],
             "agent_nickname": row[12],
+            "git_branch": row[13],
+            "git_repo": row[14],
         }
         for row in rows
     ]

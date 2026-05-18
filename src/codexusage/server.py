@@ -188,6 +188,8 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
                 "thread_source": e.get("thread_source"),
                 "parent_session_uuid": e.get("parent_session_uuid"),
                 "agent_nickname": e.get("agent_nickname"),
+                "git_branch": e.get("git_branch"),
+                "git_repo": e.get("git_repo"),
             }
         s = sessions_map[sid]
         s["events"] += 1
