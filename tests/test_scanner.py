@@ -194,6 +194,107 @@ class TestParseFile:
         assert events[0]["session_id"] == "mysession"
 
 
+def _session_meta(
+    thread_source: str = "user",
+    parent_thread_id: str | None = None,
+    agent_nickname: str | None = None,
+    cwd: str = "/home/user/proj",
+) -> dict:
+    payload: dict = {"cwd": cwd, "thread_source": thread_source}
+    if parent_thread_id:
+        spawn: dict = {"parent_thread_id": parent_thread_id}
+        if agent_nickname:
+            spawn["agent_nickname"] = agent_nickname
+        payload["source"] = {"subagent": {"thread_spawn": spawn}}
+    return {"type": "session_meta", "payload": payload}
+
+
+class TestParseFileThreadMeta:
+    def test_user_thread_source(self, tmp_path: Path) -> None:
+        f = tmp_path / "parent.jsonl"
+        f.write_text(
+            _make_jsonl(
+                _session_meta(thread_source="user"),
+                _turn_context("gpt-4o"),
+                _token_event("2024-06-01T10:00:00Z", input=10, output=5),
+            )
+        )
+        events = _parse_file(f, "parent")
+        assert events[0]["thread_source"] == "user"
+        assert events[0]["parent_session_uuid"] is None
+        assert events[0]["agent_nickname"] is None
+
+    def test_subagent_thread_source_and_parent(self, tmp_path: Path) -> None:
+        f = tmp_path / "child.jsonl"
+        f.write_text(
+            _make_jsonl(
+                _session_meta(
+                    thread_source="subagent",
+                    parent_thread_id="019e2723-6036-7b81-936e-c99ebb64ca09",
+                    agent_nickname="Confucius",
+                ),
+                _turn_context("gpt-4o"),
+                _token_event("2024-06-01T10:01:00Z", input=20, output=10),
+            )
+        )
+        events = _parse_file(f, "child")
+        assert events[0]["thread_source"] == "subagent"
+        assert events[0]["parent_session_uuid"] == "019e2723-6036-7b81-936e-c99ebb64ca09"
+        assert events[0]["agent_nickname"] == "Confucius"
+
+    def test_no_session_meta_fields_are_none(self, tmp_path: Path) -> None:
+        f = tmp_path / "nosessionmeta.jsonl"
+        f.write_text(
+            _make_jsonl(
+                _turn_context("gpt-4o"),
+                _token_event("2024-06-01T10:00:00Z", input=10, output=5),
+            )
+        )
+        events = _parse_file(f, "nosessionmeta")
+        assert events[0]["thread_source"] is None
+        assert events[0]["parent_session_uuid"] is None
+        assert events[0]["agent_nickname"] is None
+
+    def test_source_as_string_does_not_crash(self, tmp_path: Path) -> None:
+        # Regular (non-subagent) sessions have source="cli" — not a dict.
+        f = tmp_path / "regular.jsonl"
+        f.write_text(
+            _make_jsonl(
+                {
+                    "type": "session_meta",
+                    "payload": {"cwd": "/x", "thread_source": "user", "source": "cli"},
+                },
+                _turn_context("gpt-4o"),
+                _token_event("2024-06-01T10:00:00Z", input=10, output=5),
+            )
+        )
+        events = _parse_file(f, "regular")
+        assert len(events) == 1
+        assert events[0]["thread_source"] == "user"
+        assert events[0]["parent_session_uuid"] is None
+
+    def test_thread_meta_propagated_to_all_events(self, tmp_path: Path) -> None:
+        f = tmp_path / "multi.jsonl"
+        f.write_text(
+            _make_jsonl(
+                _session_meta(
+                    thread_source="subagent",
+                    parent_thread_id="aaa-bbb",
+                    agent_nickname="Ada",
+                ),
+                _turn_context("gpt-4o"),
+                _token_event("2024-06-01T10:00:00Z", input=10, output=5),
+                _token_event("2024-06-01T10:01:00Z", input=20, output=10),
+            )
+        )
+        events = _parse_file(f, "multi")
+        assert len(events) == 2
+        for e in events:
+            assert e["thread_source"] == "subagent"
+            assert e["parent_session_uuid"] == "aaa-bbb"
+            assert e["agent_nickname"] == "Ada"
+
+
 class TestScanSessions:
     def test_missing_dir_returns_empty(self, tmp_path: Path) -> None:
         assert scan_sessions(str(tmp_path / "no_such_dir")) == []
