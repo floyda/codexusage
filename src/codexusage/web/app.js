@@ -376,6 +376,13 @@ function renderEffortTable(effort_levels, hasOauth) {
 }
 
 // ── Sessions table ────────────────────────────────────────────────────────────
+function sessionLabel(s) {
+  if (s.git_repo && s.git_branch) return `${s.git_repo} / ${s.git_branch}`;
+  if (s.git_repo) return s.git_repo;
+  if (s.git_branch) return s.git_branch;
+  return fmt.short(s.session_id);
+}
+
 function renderSessionsTable(sessions) {
   if (!sessions.length) return '<p class="muted">No sessions.</p>';
   const hasSubagents = sessions.some(s => s.subagents && s.subagents.length > 0);
@@ -410,6 +417,7 @@ function renderSessionsTable(sessions) {
     }
 
     const hasKids   = s.subagents && s.subagents.length > 0;
+    const hasGit    = s.git_repo || s.git_branch;
     const expandBtn = hasKids
       ? `<button class="expand-btn" data-sid="${s.session_id}" title="Show subagents">▶</button>`
       : (hasSubagents ? '<span class="expand-spacer"></span>' : '');
@@ -417,7 +425,7 @@ function renderSessionsTable(sessions) {
       ? `<td class="num">${fmt.usd(s.total_usd != null ? s.total_usd : ownUsd)}</td><td class="num">${fmt.cr(s.total_credits != null ? s.total_credits : ownCredits)}</td>`
       : '';
     return `<tr class="${hasKids ? 'parent-row' : ''}">
-      <td class="mono session-id-cell">${expandBtn} ${fmt.short(s.session_id)}</td>
+      <td class="mono session-id-cell"${hasGit ? ` title="${s.session_id}"` : ''}>${expandBtn} ${sessionLabel(s)}</td>
       <td class="mono">${fmt.ts(s.last_timestamp)}</td>
       ${projCell}${effCell}${cwdCell}
       <td class="num">${s.events}</td>
