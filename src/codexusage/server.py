@@ -113,12 +113,16 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
                 v["usd"] = round(v["usd"], 4)
                 v["credits"] = round(v["credits"], 4)
 
-    # Fill in zero-value entries for every calendar day in [since, until) so
-    # the chart always spans the full requested range, not just days with events.
+    # Fill in zero-value entries for every calendar day in the range so the chart
+    # always spans the full requested period, not just days with events.
+    # For time-bounded ranges (e.g. Fri-17:00 billing weeks) the until date itself
+    # is partially in-range (midnight → cutoff), so include it; for date-only bounds
+    # (e.g. /api/today) the until date is fully out-of-range, so stop before it.
     since_date = date.fromisoformat(since[:10])
     until_date = date.fromisoformat(until[:10])
+    fill_end = until_date if len(until) > 10 else until_date - timedelta(days=1)
     cursor = since_date
-    while cursor < until_date:
+    while cursor <= fill_end:
         key = cursor.isoformat()
         if key not in days_map:
             days_map[key] = {

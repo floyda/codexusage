@@ -185,3 +185,37 @@ class TestSessionGrouping:
         result = self._agg(events)
         assert len(result["sessions"]) == 1
         assert result["sessions"][0]["session_id"] == child_sid
+
+
+class TestAggregateDayFill:
+    """Zero-fill covers the correct number of calendar days for different bound types."""
+
+    def _agg(self, events: list[dict], since: str, until: str) -> dict:
+        return _aggregate(events, since, until, _PRICING, _CFG)
+
+    def _dates(self, since: str, until: str) -> list[str]:
+        return [d["date"] for d in self._agg([], since, until)["days"]]
+
+    def test_billing_week_always_shows_8_days(self) -> None:
+        # Fri-17:00 → Fri-17:00 with no events: both Fridays must appear.
+        dates = self._dates("2026-05-16T17:00", "2026-05-23T17:00")
+        assert dates == [
+            "2026-05-16", "2026-05-17", "2026-05-18", "2026-05-19",
+            "2026-05-20", "2026-05-21", "2026-05-22", "2026-05-23",
+        ]
+
+    def test_date_only_range_is_exclusive_of_until(self) -> None:
+        # Date-only until is fully out-of-range — 7 days, not 8.
+        dates = self._dates("2026-05-16", "2026-05-23")
+        assert dates == [
+            "2026-05-16", "2026-05-17", "2026-05-18", "2026-05-19",
+            "2026-05-20", "2026-05-21", "2026-05-22",
+        ]
+
+    def test_event_on_until_date_before_cutoff_appears_with_data(self) -> None:
+        # An event at 09:00 on the closing Friday is within the billing window.
+        event = _evt("s1", "2026-05-23T09:00:00Z")
+        result = self._agg([event], "2026-05-16T17:00", "2026-05-23T17:00")
+        day_map = {d["date"]: d for d in result["days"]}
+        assert "2026-05-23" in day_map
+        assert day_map["2026-05-23"]["total_tokens"] > 0
