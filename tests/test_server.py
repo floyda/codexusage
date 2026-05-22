@@ -200,16 +200,27 @@ class TestAggregateDayFill:
         # Fri-17:00 → Fri-17:00 with no events: both Fridays must appear.
         dates = self._dates("2026-05-16T17:00", "2026-05-23T17:00")
         assert dates == [
-            "2026-05-16", "2026-05-17", "2026-05-18", "2026-05-19",
-            "2026-05-20", "2026-05-21", "2026-05-22", "2026-05-23",
+            "2026-05-16",
+            "2026-05-17",
+            "2026-05-18",
+            "2026-05-19",
+            "2026-05-20",
+            "2026-05-21",
+            "2026-05-22",
+            "2026-05-23",
         ]
 
     def test_date_only_range_is_exclusive_of_until(self) -> None:
         # Date-only until is fully out-of-range — 7 days, not 8.
         dates = self._dates("2026-05-16", "2026-05-23")
         assert dates == [
-            "2026-05-16", "2026-05-17", "2026-05-18", "2026-05-19",
-            "2026-05-20", "2026-05-21", "2026-05-22",
+            "2026-05-16",
+            "2026-05-17",
+            "2026-05-18",
+            "2026-05-19",
+            "2026-05-20",
+            "2026-05-21",
+            "2026-05-22",
         ]
 
     def test_event_on_until_date_before_cutoff_appears_with_data(self) -> None:
