@@ -228,6 +228,9 @@ button:hover, select:hover { border-color: var(--border-2); }
 .badge.effort-high      { color: var(--warn);   border-color: rgba(232,162,59,0.3);  background: rgba(232,162,59,0.08); }
 .badge.effort-medium    { color: var(--accent);  border-color: rgba(74,158,255,0.3);  background: rgba(74,158,255,0.08); }
 .badge.effort-low       { color: var(--good);   border-color: rgba(63,182,139,0.3);  background: rgba(63,182,139,0.08); }
+button.badge.auth-toggle { cursor: pointer; font: inherit; }
+button.badge.auth-toggle:hover { filter: brightness(1.25); }
+button.badge.auth-toggle:disabled { opacity: 0.5; cursor: wait; }
 
 .muted { color: var(--muted); }
 .flex  { display: flex; align-items: center; gap: 8px; }

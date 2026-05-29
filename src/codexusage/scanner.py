@@ -284,7 +284,10 @@ def _assign_project(cwd: str | None, group: list[dict]) -> dict:
 
 
 def _annotate_events(
-    events: list[dict], group: list[dict], root_cache: dict[str, str | None]
+    events: list[dict],
+    group: list[dict],
+    root_cache: dict[str, str | None],
+    overrides: dict[str, str] | None = None,
 ) -> None:
     """Tag each event with project, auth_type, and cwd_root (in-place).
 
@@ -294,7 +297,10 @@ def _annotate_events(
     for e in events:
         proj = _assign_project(e.get("cwd"), group)
         e["project"] = proj["name"]
-        e["auth_type"] = proj.get("auth_type", "oauth")
+        if overrides and e.get("session_id") in overrides:
+            e["auth_type"] = overrides[e["session_id"]]
+        else:
+            e["auth_type"] = proj.get("auth_type", "oauth")
         cwd = e.get("cwd")
         if cwd:
             if cwd not in root_cache:
@@ -302,7 +308,9 @@ def _annotate_events(
             e["cwd_root"] = root_cache[cwd] or cwd
 
 
-def scan_all_projects(projects: list[dict]) -> list[dict]:
+def scan_all_projects(
+    projects: list[dict], overrides: dict[str, str] | None = None
+) -> list[dict]:
     """Scan all projects and tag each event with project name and auth_type.
 
     Groups projects by sessions_dir so each directory is scanned exactly once.
@@ -321,7 +329,7 @@ def scan_all_projects(projects: list[dict]) -> list[dict]:
 
     for sessions_dir, group in groups.items():
         events = scan_sessions(sessions_dir)
-        _annotate_events(events, group, root_cache)
+        _annotate_events(events, group, root_cache, overrides)
         all_events.extend(events)
 
     all_events.sort(key=lambda e: e["timestamp"])

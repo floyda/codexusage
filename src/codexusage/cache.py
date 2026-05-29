@@ -185,13 +185,15 @@ def _scan_sessions_cached(sessions_dir: str, conn: sqlite3.Connection) -> list[d
     ]
 
 
-def scan_all_projects_cached(projects: list[dict]) -> list[dict]:
+def scan_all_projects_cached(
+    projects: list[dict], overrides: dict[str, str] | None = None
+) -> list[dict]:
     """Drop-in replacement for scan_all_projects() with SQLite incremental caching."""
     try:
         conn = _open_db(cache_path())
     except Exception:
         _LOG.warning("Cache DB unavailable, falling back to full scan", exc_info=True)
-        return scan_all_projects(projects)
+        return scan_all_projects(projects, overrides)
 
     try:
         groups: dict[str, list[dict]] = defaultdict(list)
@@ -203,13 +205,13 @@ def scan_all_projects_cached(projects: list[dict]) -> list[dict]:
 
         for sessions_dir, group in groups.items():
             events = _scan_sessions_cached(sessions_dir, conn)
-            _annotate_events(events, group, root_cache)
+            _annotate_events(events, group, root_cache, overrides)
             all_events.extend(events)
 
         all_events.sort(key=lambda e: e["timestamp"])
         return all_events
     except Exception:
         _LOG.warning("Cache scan failed, falling back to full scan", exc_info=True)
-        return scan_all_projects(projects)
+        return scan_all_projects(projects, overrides)
     finally:
         conn.close()
