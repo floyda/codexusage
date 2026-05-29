@@ -24,6 +24,12 @@ const fmt = {
     const cls = { xhigh: 'effort-xhigh', high: 'effort-high', medium: 'effort-medium', low: 'effort-low' }[effort] || '';
     return `<span class="badge ${cls}">${effort}</span>`;
   },
+  authBadge(auth, sid) {
+    const isApi = auth === 'api_token';
+    const cls   = isApi ? 'api-token-badge' : 'oauth-badge';
+    const label = isApi ? 'api' : 'oauth';
+    return `<button class="badge ${cls} auth-toggle" data-sid="${sid}" data-auth="${auth}" title="Click to toggle auth type">${label}</button>`;
+  },
 };
 
 async function api(path) {
@@ -389,17 +395,22 @@ function renderSessionsTable(sessions) {
   const multiProject = sessions.some(s => s.project && s.project !== 'default');
   const hasEffort    = sessions.some(s => s.reasoning_effort);
   const hasCwd       = sessions.some(s => s.cwd);
+  const hasAuthMix   = sessions.length > 0;
   const projHead  = multiProject  ? '<th>Project</th>' : '';
   const effHead   = hasEffort     ? '<th>Effort</th>'  : '';
   const cwdHead   = hasCwd        ? '<th>Repo</th>'    : '';
+  const authHead  = hasAuthMix    ? '<th>Auth</th>'    : '';
   const totalHead = hasSubagents  ? '<th class="num">Total USD</th><th class="num">Total Cr</th>' : '';
 
   function sessionRow(s, isChild) {
     const projCell = multiProject ? `<td class="mono" style="font-size:11px">${s.project || '—'}</td>` : '';
     const effCell  = hasEffort    ? `<td>${fmt.effortBadge(s.reasoning_effort)}</td>` : '';
     const cwdCell  = hasCwd       ? `<td class="mono" style="font-size:11px" title="${s.cwd || ''}">${cwdBasename(s.cwd)}</td>` : '';
+    const authCell = hasAuthMix   ? `<td>${fmt.authBadge(s.auth_type || 'oauth', s.session_id)}</td>` : '';
     const ownUsd     = s.own_usd     != null ? s.own_usd     : s.usd;
     const ownCredits = s.own_credits != null ? s.own_credits : s.credits;
+    const isApi      = s.auth_type === 'api_token';
+    const crCell     = n => isApi ? '<span class="muted">—</span>' : fmt.cr(n);
 
     if (isChild) {
       const label = s.agent_nickname || fmt.short(s.session_id);
@@ -407,11 +418,11 @@ function renderSessionsTable(sessions) {
       return `<tr class="subagent-row" data-parent="${s._parent_sid}" style="display:none">
         <td class="mono sub-indent">↳ ${label}</td>
         <td class="mono">${fmt.ts(s.last_timestamp)}</td>
-        ${projCell}${effCell}${cwdCell}
+        ${projCell}${effCell}${cwdCell}${authCell}
         <td class="num">${s.events}</td>
         <td class="num">${fmt.int(s.total_tokens)}</td>
         <td class="num">${fmt.usd(ownUsd)}</td>
-        <td class="num">${fmt.cr(ownCredits)}</td>
+        <td class="num">${crCell(ownCredits)}</td>
         ${totalCols}
       </tr>`;
     }
@@ -422,16 +433,16 @@ function renderSessionsTable(sessions) {
       ? `<button class="expand-btn" data-sid="${s.session_id}" title="Show subagents">▶</button>`
       : (hasSubagents ? '<span class="expand-spacer"></span>' : '');
     const totalCols = hasSubagents
-      ? `<td class="num">${fmt.usd(s.total_usd != null ? s.total_usd : ownUsd)}</td><td class="num">${fmt.cr(s.total_credits != null ? s.total_credits : ownCredits)}</td>`
+      ? `<td class="num">${fmt.usd(s.total_usd != null ? s.total_usd : ownUsd)}</td><td class="num">${crCell(s.total_credits != null ? s.total_credits : ownCredits)}</td>`
       : '';
     return `<tr class="${hasKids ? 'parent-row' : ''}">
       <td class="mono session-id-cell"${hasGit ? ` title="${s.session_id}"` : ''}>${expandBtn} ${sessionLabel(s)}</td>
       <td class="mono">${fmt.ts(s.last_timestamp)}</td>
-      ${projCell}${effCell}${cwdCell}
+      ${projCell}${effCell}${cwdCell}${authCell}
       <td class="num">${s.events}</td>
       <td class="num">${fmt.int(s.total_tokens)}</td>
       <td class="num">${fmt.usd(ownUsd)}</td>
-      <td class="num">${fmt.cr(ownCredits)}</td>
+      <td class="num">${crCell(ownCredits)}</td>
       ${totalCols}
     </tr>`;
   }
@@ -450,7 +461,7 @@ function renderSessionsTable(sessions) {
   return `
     <table>
       <thead><tr>
-        <th>Session</th><th>Date</th>${projHead}${effHead}${cwdHead}
+        <th>Session</th><th>Date</th>${projHead}${effHead}${cwdHead}${authHead}
         <th class="num">Events</th><th class="num">Tokens</th>
         <th class="num">USD</th><th class="num">Credits</th>${totalHead}
       </tr></thead>
@@ -467,6 +478,27 @@ function initExpandButtons(container) {
       btn.title = open ? 'Show subagents' : 'Hide subagents';
       (container || document).querySelectorAll(`.subagent-row[data-parent="${sid}"]`)
         .forEach(r => { r.style.display = open ? 'none' : ''; });
+    });
+  });
+}
+
+function initAuthToggle(container, onToggled) {
+  (container || document).querySelectorAll('.auth-toggle').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const sid  = btn.dataset.sid;
+      const next = btn.dataset.auth === 'api_token' ? 'oauth' : 'api_token';
+      btn.disabled = true;
+      try {
+        await fetch(`/api/sessions/${encodeURIComponent(sid)}/auth`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ auth_type: next }),
+        });
+        if (onToggled) onToggled();
+      } catch (e) {
+        console.error('auth toggle failed', e);
+        btn.disabled = false;
+      }
     });
   });
 }
@@ -607,6 +639,7 @@ function _paintOverview(app, cfgProjects) {
   initOverviewControls();
   initChartToggles(app, cfgProjects);
   initExpandButtons(app);
+  initAuthToggle(app, () => renderOverview(app));
   if (multiProject) initProjectPills(app, cfgProjects);
 }
 
@@ -658,6 +691,7 @@ async function renderSessionsRoute(app) {
       const tbl = $('#sessions-table');
       tbl.innerHTML = renderSessionsTable(data.sessions);
       initExpandButtons(tbl);
+      initAuthToggle(tbl, load);
     } catch (e) {
       $('#sessions-table').innerHTML = `<p style="color:var(--bad)">Error: ${e.message}</p>`;
     }

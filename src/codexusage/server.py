@@ -8,10 +8,11 @@ import mimetypes
 import re
 from datetime import date, datetime, timedelta
 from importlib.resources import files
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from zoneinfo import ZoneInfo
 
 from .cache import scan_all_projects_cached
+from .config import clear_session_auth_override, set_session_auth_override
 from .pricing import load_pricing, tokens_to_usd, tokens_to_usd_breakdown, usd_to_credits
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$")
@@ -186,6 +187,7 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
                 "total_tokens": 0,
                 "usd": 0.0,
                 "credits": 0.0,
+                "auth_type": e.get("auth_type", "oauth"),
                 "project": e.get("project", "default"),
                 "reasoning_effort": e.get("reasoning_effort"),
                 "cwd": e.get("cwd_root") or e.get("cwd"),
@@ -300,9 +302,15 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
 
     effort_levels = sorted(effort_map.values(), key=lambda x: _EFFORT_ORDER.get(x["effort"], 99))
 
-    # Totals — credits are OAuth-only; USD is all projects
-    oauth_credits = sum(r["credits"] for r in projects_map.values() if r["auth_type"] == "oauth")
-    api_token_usd = sum(r["usd"] for r in projects_map.values() if r["auth_type"] == "api_token")
+    # Totals — computed per-event so per-session auth overrides are reflected correctly.
+    oauth_credits = 0.0
+    api_token_usd = 0.0
+    for e in filtered:
+        e_usd = tokens_to_usd(e["model"], e, pricing)
+        if e.get("auth_type", "oauth") == "oauth":
+            oauth_credits += usd_to_credits(e_usd, cpd)
+        else:
+            api_token_usd += e_usd
     total_usd = sum(r["usd"] for r in projects_map.values())
     total_tokens = sum(r["total_tokens"] for r in projects_map.values())
     pool_pct = round(oauth_credits / pool_limit * 100, 1) if pool_limit > 0 else 0.0
@@ -389,7 +397,8 @@ def build_handler(cfg: dict):
                     return _send_json(self, {"error": "invalid since — expected YYYY-MM-DD"}, 400)
                 if qs_until and not _DATE_RE.match(qs_until):
                     return _send_json(self, {"error": "invalid until — expected YYYY-MM-DD"}, 400)
-                events = scan_all_projects_cached(cfg["projects"])
+                overrides = cfg.get("session_auth_overrides") or {}
+                events = scan_all_projects_cached(cfg["projects"], overrides)
                 def_bounds = _week_bounds() if path == "/api/week" else _today_bounds()
                 since = qs_since if qs_since else def_bounds[0]
                 until = qs_until if qs_until else def_bounds[1]
@@ -406,13 +415,34 @@ def build_handler(cfg: dict):
             if path == "/api/sessions":
                 since = qs.get("since", [None])[0] or "0000-01-01"
                 until = qs.get("until", [None])[0] or "9999-12-31"
-                events = scan_all_projects_cached(cfg["projects"])
+                overrides = cfg.get("session_auth_overrides") or {}
+                events = scan_all_projects_cached(cfg["projects"], overrides)
                 result = _aggregate(events, since, until, pricing, cfg)
                 return _send_json(self, {"sessions": result["sessions"]})
 
             handler_instance = self
             handler_instance.send_response(404)
             handler_instance.end_headers()
+
+        def do_PATCH(self):
+            path = urlparse(self.path).path
+            if not (path.startswith("/api/sessions/") and path.endswith("/auth")):
+                self.send_response(404)
+                self.end_headers()
+                return
+            session_id = unquote(path[len("/api/sessions/"):-len("/auth")])
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length)) if length else {}
+            auth_type = body.get("auth_type")
+            if auth_type is None:
+                clear_session_auth_override(session_id)
+                cfg.setdefault("session_auth_overrides", {}).pop(session_id, None)
+            else:
+                if auth_type not in ("oauth", "api_token"):
+                    return _send_json(self, {"error": "invalid auth_type"}, 400)
+                set_session_auth_override(session_id, auth_type)
+                cfg.setdefault("session_auth_overrides", {})[session_id] = auth_type
+            _send_json(self, {"ok": True})
 
     return H
 

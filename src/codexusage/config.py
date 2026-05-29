@@ -13,6 +13,7 @@ DEFAULTS: dict[str, Any] = {
     "sessions_dir": "",
     "port": 8080,
     "projects": [],
+    "session_auth_overrides": {},
 }
 
 
@@ -127,3 +128,19 @@ def remove_repo(project_name: str, repo_path: str) -> None:
 
 def list_projects() -> list[dict[str, Any]]:
     return load_config()["projects"]
+
+
+def set_session_auth_override(session_id: str, auth_type: str) -> None:
+    if auth_type not in {"oauth", "api_token"}:
+        raise ValueError(f"auth_type must be 'oauth' or 'api_token', got {auth_type!r}")
+    stored = _read_raw()
+    overrides = dict(stored.get("session_auth_overrides", {}))
+    overrides[session_id] = auth_type
+    save_config({"session_auth_overrides": overrides})
+
+
+def clear_session_auth_override(session_id: str) -> None:
+    stored = _read_raw()
+    overrides = dict(stored.get("session_auth_overrides", {}))
+    overrides.pop(session_id, None)
+    save_config({"session_auth_overrides": overrides})
