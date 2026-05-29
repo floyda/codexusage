@@ -97,21 +97,13 @@ function initProjectPills(app, cfgProjects) {
 }
 
 // ── Pool bar ──────────────────────────────────────────────────────────────────
-function renderPool(pool, rangeLabel) {
+function renderPool(pool) {
   const pct = Math.min(pool.pct ?? 0, 100);
   const fillClass = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
-  const isDefaultWeek = !rangeLabel || rangeLabel === 'this week';
-  const title = isDefaultWeek ? 'Weekly Credit Pool' : `Credits — ${rangeLabel}`;
-  const ld = londonDateParts();
-  const daysSinceFri = (ld.dayOfWeek + 2) % 7;
-  const daysLeft = daysSinceFri === 0 && ld.hour < 17 ? 0 : (7 - daysSinceFri) || 7;
-  const resetNote = daysLeft === 0 ? 'resets today at 17:00' : `resets Friday · ${daysLeft} day${daysLeft !== 1 ? 's' : ''} left`;
-  const meta = isDefaultWeek ? resetNote : '';
   return `
     <div class="card pool-card">
       <div class="pool-header">
-        <h2>${title}</h2>
-        ${meta ? `<span class="pool-meta">${meta}</span>` : ''}
+        <h2>Rolling 7-Day Credit Pool</h2>
       </div>
       <div class="pool-numbers">
         <span class="pool-used">${fmt.cr(pool.used)}</span>
@@ -125,51 +117,78 @@ function renderPool(pool, rangeLabel) {
     </div>`;
 }
 
-// ── Weekly pool breakdown ─────────────────────────────────────────────────
-function nearestPriorFriday(dateStr) {
-  const d = new Date(dateStr.slice(0, 10) + 'T12:00');
-  const daysSinceFri = (d.getDay() + 2) % 7;
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - daysSinceFri);
+// ── Credit recovery chart ─────────────────────────────────────────────────────
+function renderCreditRecovery(pool) {
+  if (!pool.release_schedule || pool.release_schedule.length === 0) return '';
+  return `
+    <div class="card">
+      <h2>Credit recovery (next 7 days)</h2>
+      <div class="chart-box" id="recovery-chart"></div>
+    </div>`;
 }
 
-function renderWeeklyPool(days, limit, range) {
-  const start = nearestPriorFriday(range.since);
-  const todayStr = localDate(new Date());
-  const buckets = [];
+function mountCreditRecovery(pool) {
+  const el = document.getElementById('recovery-chart');
+  if (!el) return;
+  const existing = echarts.getInstanceByDom(el);
+  if (existing) existing.dispose();
 
-  for (let fri = new Date(start); ; fri = new Date(fri.getFullYear(), fri.getMonth(), fri.getDate() + 7)) {
-    const nextFri = new Date(fri.getFullYear(), fri.getMonth(), fri.getDate() + 7);
-    const friStr  = localDate(fri);
-    const nextStr = localDate(nextFri);
-    buckets.push({ friStr, nextStr, credits: 0, isCurrent: todayStr >= friStr && todayStr < nextStr });
-    if (nextStr >= range.until.slice(0, 10)) break;
+  const nowMs = new Date(pool.now.replace('T', ' ') + ':00').getTime();
+  const limitMs = nowMs + 7 * 24 * 60 * 60 * 1000;
+  const remaining = pool.limit - pool.used;
+
+  const data = [[pool.now.replace('T', ' ') + ':00', remaining]];
+  let running = remaining;
+  for (const entry of pool.release_schedule) {
+    running += entry.credits_releasing;
+    data.push([entry.at.replace('T', ' ') + ':00', Math.min(running, pool.limit)]);
   }
+  data.push([new Date(limitMs).toISOString().slice(0, 16).replace('T', ' ') + ':00', pool.limit]);
 
-  for (const day of days) {
-    const b = buckets.find(b => day.date >= b.friStr && day.date < b.nextStr);
-    if (b) b.credits += day.credits ?? 0;
-  }
-
-  const fmtWeekLabel = (fri, next) => `${fmtDay(fri)} – ${fmtDay(next)}`;
-
-  const rows = buckets.map(({ friStr, nextStr, credits, isCurrent }) => {
-    const pct = limit > 0 ? Math.min((credits / limit) * 100, 100) : 0;
-    const fillClass = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : '';
-    return `
-      <div class="week-row">
-        <span class="week-label">${fmtWeekLabel(friStr, nextStr)}${isCurrent ? ' ★' : ''}</span>
-        <div class="pool-track mini"><div class="pool-fill ${fillClass}" style="width:${pct}%"></div></div>
-        <span class="week-cr">${fmt.cr(credits)}</span>
-      </div>`;
-  }).join('');
-
-  const total = buckets.reduce((s, b) => s + b.credits, 0);
-  return `
-    <div class="card pool-card">
-      <div class="pool-header"><h2>Credits by week</h2></div>
-      <div class="week-rows">${rows}</div>
-      <div class="pool-reset">Total: ${fmt.cr(total)} &nbsp;·&nbsp; ★ = current week</div>
-    </div>`;
+  const chart = echarts.init(el, null, { renderer: 'canvas' });
+  chart.setOption({
+    backgroundColor: 'transparent',
+    grid: { top: 10, bottom: 30, left: 60, right: 10 },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#131922', borderColor: '#1F2630',
+      textStyle: { color: '#E6EDF3', fontSize: 12 },
+      formatter: params => {
+        const d = new Date(params[0].value[0]);
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        const label = `${fmtDay(localDate(d))} ${hh}:${mm}`;
+        return `${label}<br><b>${params[0].value[1].toFixed(2)} cr available</b>`;
+      },
+    },
+    xAxis: {
+      type: 'time',
+      axisLabel: {
+        color: '#8B98A6', fontSize: 11,
+        formatter: value => fmtDay(localDate(new Date(value))),
+      },
+      axisLine: { lineStyle: { color: '#1F2630' } },
+      min: nowMs,
+      max: limitMs,
+    },
+    yAxis: {
+      type: 'value',
+      min: 0,
+      max: pool.limit,
+      axisLabel: { color: '#8B98A6', fontSize: 11, formatter: v => v.toFixed(0) + ' cr' },
+      splitLine: { lineStyle: { color: '#1F2630' } },
+    },
+    series: [{
+      type: 'line',
+      step: 'end',
+      data,
+      symbol: 'circle',
+      symbolSize: 6,
+      lineStyle: { color: '#3FB68B', width: 2 },
+      itemStyle: { color: '#3FB68B' },
+      areaStyle: { color: 'rgba(63,182,139,0.08)' },
+    }],
+  });
 }
 
 // ── API token card ────────────────────────────────────────────────────────────
@@ -513,6 +532,9 @@ let _lastData = null;
 // Module-level range state — preserved across re-renders so user selections survive innerHTML replacement.
 let _since = null;
 let _until = null;
+// When false, renderOverview calls /api/week with no params so the server always
+// computes fresh rolling bounds. Set true only when the user explicitly applies a range.
+let _rangeIsCustom = false;
 
 // ── Date helpers ──────────────────────────────────────────────────────────────
 // Always use local calendar date, never toISOString() which returns UTC and
@@ -520,34 +542,22 @@ let _until = null;
 function localDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
-// Format a YYYY-MM-DD string as a short date in en-GB order (D/M) — consistent with London billing timezone.
+function localDateTime(d) {
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${localDate(d)}T${hh}:${mm}`;
+}
+// Format a YYYY-MM-DD string as a short date in en-GB order (D/M).
 function fmtDay(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Intl.DateTimeFormat('en-GB', { month: 'numeric', day: 'numeric' }).format(new Date(y, m - 1, d));
 }
-// Return current calendar date/hour in London time for billing-week calculations.
-function londonDateParts(d = new Date()) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Europe/London',
-    weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(d).reduce((a, p) => ({ ...a, [p.type]: p.value }), {});
-  const WD = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  const dayOfWeek = WD[parts.weekday];
-  if (dayOfWeek === undefined) throw new Error(`londonDateParts: unexpected weekday "${parts.weekday}"`);
-  return { year: +parts.year, month: +parts.month, day: +parts.day, hour: +parts.hour % 24, dayOfWeek };
-}
 function todayLabel()    { return localDate(new Date()); }
 function tomorrowLabel() { const d = new Date(); return localDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)); }
-function weekLabel() {
-  const p = londonDateParts();
-  // Billing week resets Friday 17:00 London time.
-  let daysSinceFri = (p.dayOfWeek + 2) % 7;
-  if (daysSinceFri === 0 && p.hour < 17) daysSinceFri = 7;
-  const base = new Date(p.year, p.month - 1, p.day);
-  const friday = new Date(base.getFullYear(), base.getMonth(), base.getDate() - daysSinceFri);
-  const nextFri = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate() + 7);
-  return { since: localDate(friday) + 'T17:00', until: localDate(nextFri) + 'T17:00' };
+function rollingDefaultBounds() {
+  const now = new Date();
+  const since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  return { since: localDateTime(since), until: localDateTime(now) };
 }
 
 // Split a "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM" string into [date, time] parts.
@@ -569,9 +579,9 @@ function initChartToggles(app, cfgProjects) {
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 function buildOverviewControls() {
-  const wk = weekLabel();
-  const [sinceDate, sinceTime] = splitDT(_since || wk.since);
-  const [untilDate, untilTime] = splitDT(_until || wk.until);
+  const rb = rollingDefaultBounds();
+  const [sinceDate, sinceTime] = splitDT(_since || rb.since);
+  const [untilDate, untilTime] = splitDT(_until || rb.until);
   return `
     <div class="filter-row controls">
       <label>From
@@ -582,7 +592,7 @@ function buildOverviewControls() {
         <input type="date" id="until-date" value="${untilDate}">
         <input type="time" id="until-time" value="${untilTime}">
       </label>
-      <button class="preset-btn" data-mode="week">This week</button>
+      <button class="preset-btn" data-mode="rolling">Last 7 days</button>
       <button class="preset-btn" data-days="14">2 weeks</button>
       <button class="preset-btn" data-days="21">3 weeks</button>
       <button id="apply-btn">Apply</button>
@@ -600,16 +610,18 @@ function _paintOverview(app, cfgProjects) {
           has_oauth, has_api_token, has_effort_data,
           days_by_model, days_by_project, days_by_cwd, has_cwd_data } = filtered;
 
-  const wk = weekLabel();
+  const rb = rollingDefaultBounds();
   const fmtDT = s => s ? s.replace('T', ' ') : s;
-  const label = (range.since === wk.since && range.until === wk.until)
-    ? 'this week'
+  const label = (range.since === rb.since && range.until === rb.until)
+    ? 'rolling 7 days'
     : `${fmtDT(range.since)} .. ${fmtDT(range.until)}`;
+
+  const showRecovery = has_oauth && pool.now && range.until >= pool.now;
 
   app.innerHTML = `
     ${multiProject ? renderProjectPills(cfgProjects) : ''}
     ${buildOverviewControls()}
-    ${has_oauth ? (label !== 'this week' && days.length > 7 ? renderWeeklyPool(days, pool.limit, range) : renderPool(pool, label)) : ''}
+    ${has_oauth ? renderPool(pool) : ''}
     ${renderKPIs(totals, has_oauth)}
     ${has_api_token ? renderApiTokenCard(api_token_totals, filtered.projects) : ''}
     <div class="card">
@@ -624,6 +636,7 @@ function _paintOverview(app, cfgProjects) {
       </div>
       <div class="chart-box" id="daily-chart"></div>
     </div>
+    ${showRecovery ? renderCreditRecovery(pool) : ''}
     ${multiProject ? `<div class="card"><h2>By project</h2>${renderProjectsTable(filtered.projects, has_oauth)}</div>` : ''}
     <div class="card">
       <h2>By model</h2>
@@ -636,6 +649,7 @@ function _paintOverview(app, cfgProjects) {
     </div>`;
 
   renderChart(days, has_oauth, has_api_token, days_by_model, days_by_project, days_by_cwd);
+  if (showRecovery) mountCreditRecovery(pool);
   initOverviewControls();
   initChartToggles(app, cfgProjects);
   initExpandButtons(app);
@@ -644,9 +658,11 @@ function _paintOverview(app, cfgProjects) {
 }
 
 async function renderOverview(app) {
-  // Build the URL from state before touching the DOM — inputs live inside app.
+  // Only pass explicit params when the user has customised the range. Without params,
+  // the server always computes fresh rolling bounds anchored to the current time,
+  // which keeps pool.now and range.until in sync across auto-refreshes.
   let url = '/api/week';
-  if (_since) {
+  if (_rangeIsCustom && _since) {
     url += '?since=' + _since;
     if (_until) url += '&until=' + _until;
   }
@@ -660,7 +676,7 @@ async function renderOverview(app) {
     return;
   }
 
-  // Sync state to what the server actually used (respects config/default overrides).
+  // Sync display state from what the server actually returned.
   _since = _lastData.range.since;
   _until = _lastData.range.until;
 
@@ -761,21 +777,23 @@ function initOverviewControls() {
       const ud = $('#until-date').value, ut = $('#until-time').value || '00:00';
       _since = sd ? `${sd}T${st}` : null;
       _until = ud ? `${ud}T${ut}` : null;
+      _rangeIsCustom = true;
       renderOverview($('#app'));
     });
   }
   $$('.preset-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const d = new Date();
-      if (btn.dataset.mode === 'week') {
-        // Billing week: Fri 17:00 → next Fri 17:00.
-        const wk = weekLabel();
-        _since = wk.since;
-        _until = wk.until;
+      if (btn.dataset.mode === 'rolling') {
+        // Return to default rolling view — let server compute fresh bounds each time.
+        _since = null;
+        _until = null;
+        _rangeIsCustom = false;
       } else {
         const days = parseInt(btn.dataset.days, 10);
         _since = localDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - (days - 1))) + 'T00:00';
         _until = tomorrowLabel() + 'T00:00';
+        _rangeIsCustom = true;
       }
       renderOverview($('#app'));
     });

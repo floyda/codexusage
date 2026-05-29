@@ -2,59 +2,35 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timezone
 
-from codexusage.server import _aggregate, _week_bounds
+from codexusage.server import _aggregate, _release_schedule, _rolling_bounds
 
-_LON = ZoneInfo("Europe/London")
-
-
-def lon(year, month, day, hour, minute=0):
-    return datetime(year, month, day, hour, minute, tzinfo=_LON)
+_UTC = timezone.utc
 
 
-class TestWeekBounds:
-    def test_mid_week_returns_prior_friday(self):
-        # Wednesday — should anchor to the previous Friday
-        since, until = _week_bounds(lon(2026, 5, 6, 12))  # Wednesday noon
-        assert since == "2026-05-01T17:00"
-        assert until == "2026-05-08T17:00"
+def utc(year, month, day, hour, minute=0):
+    return datetime(year, month, day, hour, minute, tzinfo=_UTC)
 
-    def test_friday_after_reset_returns_current_friday(self):
-        # Friday 17:01 — new week has just opened
-        since, until = _week_bounds(lon(2026, 5, 8, 17, 1))
-        assert since == "2026-05-08T17:00"
-        assert until == "2026-05-15T17:00"
 
-    def test_friday_before_reset_returns_previous_friday(self):
-        # Friday 16:59 — new week hasn't started yet
-        since, until = _week_bounds(lon(2026, 5, 8, 16, 59))
-        assert since == "2026-05-01T17:00"
-        assert until == "2026-05-08T17:00"
+class TestRollingBounds:
+    def test_returns_7_day_window(self):
+        now = utc(2026, 5, 29, 12, 0)
+        since, until = _rolling_bounds(now)
+        assert since == "2026-05-22T12:00"
+        assert until == "2026-05-29T12:00"
 
-    def test_friday_exactly_at_reset(self):
-        # Friday exactly 17:00 — new week starts
-        since, until = _week_bounds(lon(2026, 5, 8, 17, 0))
-        assert since == "2026-05-08T17:00"
-        assert until == "2026-05-15T17:00"
+    def test_spans_midnight(self):
+        now = utc(2026, 5, 29, 3, 30)
+        since, until = _rolling_bounds(now)
+        assert since == "2026-05-22T03:30"
+        assert until == "2026-05-29T03:30"
 
-    def test_sunday_mid_week(self):
-        since, until = _week_bounds(lon(2026, 5, 10, 10))  # Sunday
-        assert since == "2026-05-08T17:00"
-        assert until == "2026-05-15T17:00"
-
-    def test_bst_summer_time(self):
-        # During BST (UTC+1): Friday 17:00 BST = 16:00 UTC.
-        # datetime.hour reflects London clock (BST), so 17 == reset boundary.
-        since, until = _week_bounds(lon(2026, 7, 10, 17, 1))  # Friday in BST
-        assert since == "2026-07-10T17:00"
-        assert until == "2026-07-17T17:00"
-
-    def test_bst_friday_before_reset(self):
-        since, until = _week_bounds(lon(2026, 7, 10, 16, 59))  # Friday in BST, before 17:00
-        assert since == "2026-07-03T17:00"
-        assert until == "2026-07-10T17:00"
+    def test_spans_month_boundary(self):
+        now = utc(2026, 6, 3, 10, 15)
+        since, until = _rolling_bounds(now)
+        assert since == "2026-05-27T10:15"
+        assert until == "2026-06-03T10:15"
 
 
 # ── Session grouping helpers ──────────────────────────────────────────────────
@@ -78,6 +54,7 @@ def _evt(
     thread_source: str | None = None,
     parent_session_uuid: str | None = None,
     agent_nickname: str | None = None,
+    auth_type: str = "oauth",
 ) -> dict:
     return {
         "session_id": session_id,
@@ -91,11 +68,55 @@ def _evt(
         "reasoning_effort": None,
         "cwd": None,
         "project": "default",
-        "auth_type": "oauth",
+        "auth_type": auth_type,
         "thread_source": thread_source,
         "parent_session_uuid": parent_session_uuid,
         "agent_nickname": agent_nickname,
     }
+
+
+class TestReleaseSchedule:
+    def test_events_in_window_produce_schedule(self):
+        now = utc(2026, 5, 29, 12, 0)
+        events = [_evt("s1", "2026-05-25T10:30:00Z")]
+        schedule = _release_schedule(events, now, _PRICING, 100)
+        assert len(schedule) == 1
+        assert schedule[0]["at"] == "2026-06-01T10:00"
+        assert schedule[0]["credits_releasing"] > 0
+
+    def test_events_outside_window_excluded(self):
+        now = utc(2026, 5, 29, 12, 0)
+        # Event older than 7 days
+        events = [_evt("s1", "2026-05-21T10:00:00Z")]
+        schedule = _release_schedule(events, now, _PRICING, 100)
+        assert schedule == []
+
+    def test_non_oauth_events_excluded(self):
+        now = utc(2026, 5, 29, 12, 0)
+        events = [_evt("s1", "2026-05-25T10:30:00Z", auth_type="api_token")]
+        schedule = _release_schedule(events, now, _PRICING, 100)
+        assert schedule == []
+
+    def test_multiple_events_same_hour_grouped(self):
+        now = utc(2026, 5, 29, 12, 0)
+        # Both events expire in the same hour bucket
+        events = [
+            _evt("s1", "2026-05-25T10:10:00Z"),
+            _evt("s2", "2026-05-25T10:45:00Z"),
+        ]
+        schedule = _release_schedule(events, now, _PRICING, 100)
+        assert len(schedule) == 1
+        assert schedule[0]["at"] == "2026-06-01T10:00"
+
+    def test_schedule_sorted_ascending(self):
+        now = utc(2026, 5, 29, 12, 0)
+        events = [
+            _evt("s2", "2026-05-27T15:00:00Z"),
+            _evt("s1", "2026-05-23T09:00:00Z"),
+        ]
+        schedule = _release_schedule(events, now, _PRICING, 100)
+        assert len(schedule) == 2
+        assert schedule[0]["at"] < schedule[1]["at"]
 
 
 class TestSessionGrouping:
@@ -196,18 +217,18 @@ class TestAggregateDayFill:
     def _dates(self, since: str, until: str) -> list[str]:
         return [d["date"] for d in self._agg([], since, until)["days"]]
 
-    def test_billing_week_always_shows_8_days(self) -> None:
-        # Fri-17:00 → Fri-17:00 with no events: both Fridays must appear.
-        dates = self._dates("2026-05-16T17:00", "2026-05-23T17:00")
+    def test_rolling_window_shows_8_days(self) -> None:
+        # Rolling 7-day window with time components: both boundary dates must appear.
+        dates = self._dates("2026-05-22T12:00", "2026-05-29T12:00")
         assert dates == [
-            "2026-05-16",
-            "2026-05-17",
-            "2026-05-18",
-            "2026-05-19",
-            "2026-05-20",
-            "2026-05-21",
             "2026-05-22",
             "2026-05-23",
+            "2026-05-24",
+            "2026-05-25",
+            "2026-05-26",
+            "2026-05-27",
+            "2026-05-28",
+            "2026-05-29",
         ]
 
     def test_date_only_range_is_exclusive_of_until(self) -> None:
@@ -223,10 +244,21 @@ class TestAggregateDayFill:
             "2026-05-22",
         ]
 
-    def test_event_on_until_date_before_cutoff_appears_with_data(self) -> None:
-        # An event at 09:00 on the closing Friday is within the billing window.
-        event = _evt("s1", "2026-05-23T09:00:00Z")
-        result = self._agg([event], "2026-05-16T17:00", "2026-05-23T17:00")
+    def test_event_within_rolling_window_appears_with_data(self) -> None:
+        # An event at 09:00 on the last day is within the rolling window.
+        event = _evt("s1", "2026-05-29T09:00:00Z")
+        result = self._agg([event], "2026-05-22T12:00", "2026-05-29T12:00")
         day_map = {d["date"]: d for d in result["days"]}
-        assert "2026-05-23" in day_map
-        assert day_map["2026-05-23"]["total_tokens"] > 0
+        assert "2026-05-29" in day_map
+        assert day_map["2026-05-29"]["total_tokens"] > 0
+
+    def test_pool_always_reflects_rolling_window(self) -> None:
+        # Even when querying a historical range, pool stats come from the rolling window.
+        # Event is in rolling window (recent) but outside the historical query range.
+        now = utc(2026, 5, 29, 12, 0)
+        recent_event = _evt("s1", "2026-05-28T10:00:00Z")  # in rolling window
+        result = _aggregate([recent_event], "2026-05-01", "2026-05-15", _PRICING, _CFG, now=now)
+        # Pool reflects rolling window (includes the recent event)
+        assert result["pool"]["used"] > 0
+        # But the queried range has no events
+        assert result["totals"]["total_tokens"] == 0

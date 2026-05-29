@@ -5,9 +5,8 @@ from __future__ import annotations
 import argparse
 import sys
 import webbrowser
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from .cache import scan_all_projects_cached
 from .config import (
@@ -53,7 +52,10 @@ def _user_range(args) -> tuple[str, str] | None:
 
 
 def _scoped_events(events: list[dict], since: str, until: str) -> list[dict]:
-    return [e for e in events if since <= e["timestamp"][:10] < until]
+    has_time = len(since) > 10 or len(until) > 10
+    return [
+        e for e in events if since <= (e["timestamp"] if has_time else e["timestamp"][:10]) < until
+    ]
 
 
 def _print_model_table(
@@ -159,15 +161,10 @@ def cmd_week(args):
         since, until = user
         label = f"{since} .. {until}"
     else:
-        n = getattr(args, "weeks", None) or 1
-        now = datetime.now(ZoneInfo("Europe/London"))
-        days_since_fri = (now.weekday() - 4) % 7
-        if days_since_fri == 0 and now.hour < 17:
-            days_since_fri = 7
-        friday = now.date() - timedelta(days=days_since_fri)
-        until = (friday + timedelta(weeks=1)).isoformat()
-        since = (friday - timedelta(weeks=n - 1)).isoformat()
-        label = f"last {n} weeks (since {since})" if n > 1 else f"week of {friday.isoformat()}"
+        now = datetime.now(timezone.utc)
+        since = (now - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M")
+        until = now.strftime("%Y-%m-%dT%H:%M")
+        label = "rolling 7 days"
     _print_summary(label, _scoped_events(events, since, until), cfg)
 
 
@@ -351,10 +348,7 @@ def main():
         "week",
         parents=[common],
         add_help=True,
-        help="Print weekly token/credit summary (or custom range with --since/--until)",
-    )
-    w.add_argument(
-        "--weeks", type=int, metavar="N", help="Look back N weeks from today (default 1)"
+        help="Print rolling 7-day token/credit summary (or custom range with --since/--until)",
     )
     w.set_defaults(func=cmd_week)
 
