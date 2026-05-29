@@ -308,9 +308,7 @@ def _annotate_events(
             e["cwd_root"] = root_cache[cwd] or cwd
 
 
-def scan_all_projects(
-    projects: list[dict], overrides: dict[str, str] | None = None
-) -> list[dict]:
+def scan_all_projects(projects: list[dict], overrides: dict[str, str] | None = None) -> list[dict]:
     """Scan all projects and tag each event with project name and auth_type.
 
     Groups projects by sessions_dir so each directory is scanned exactly once.

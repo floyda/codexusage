@@ -6,29 +6,45 @@ import http.server
 import json
 import mimetypes
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from importlib.resources import files
 from urllib.parse import parse_qs, unquote, urlparse
-from zoneinfo import ZoneInfo
 
 from .cache import scan_all_projects_cached
 from .config import clear_session_auth_override, set_session_auth_override
 from .pricing import load_pricing, tokens_to_usd, tokens_to_usd_breakdown, usd_to_credits
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$")
-_LONDON_TZ = ZoneInfo("Europe/London")
 
 
-def _week_bounds(now: datetime | None = None) -> tuple[str, str]:
-    """Return (since, until) for the current Fri-17:00 → Fri-17:00 billing week (London time)."""
-    dt = now if now is not None else datetime.now(_LONDON_TZ)
-    # weekday(): Mon=0 … Fri=4 … Sun=6  →  days since last Friday
-    days_since_fri = (dt.weekday() - 4) % 7
-    # On Friday before 17:00 the new week hasn't started yet — use previous Friday.
-    if days_since_fri == 0 and dt.hour < 17:
-        days_since_fri = 7
-    friday = dt.date() - timedelta(days=days_since_fri)
-    return f"{friday}T17:00", f"{friday + timedelta(weeks=1)}T17:00"
+def _rolling_bounds(now: datetime | None = None) -> tuple[str, str]:
+    """Return (since, until) for the rolling 7-day window ending at now."""
+    dt = now if now is not None else datetime.now(timezone.utc)
+    since = dt - timedelta(days=7)
+    fmt = "%Y-%m-%dT%H:%M"
+    return since.strftime(fmt), dt.strftime(fmt)
+
+
+def _release_schedule(events: list[dict], now: datetime, pricing: dict, cpd: float) -> list[dict]:
+    """Return per-hour credit release schedule for OAuth events expiring over the next 7 days."""
+    window_start = now - timedelta(days=7)
+    buckets: dict[str, float] = {}
+    for e in events:
+        if e.get("auth_type", "oauth") != "oauth":
+            continue
+        ts_str = e["timestamp"]
+        if not (window_start.strftime("%Y-%m-%dT%H:%M") < ts_str <= now.strftime("%Y-%m-%dT%H:%M")):
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_str)
+        except ValueError:
+            continue
+        expiry = ts + timedelta(days=7)
+        bucket_key = expiry.strftime("%Y-%m-%dT%H:00")
+        usd = tokens_to_usd(e["model"], e, pricing)
+        credits = usd_to_credits(usd, cpd)
+        buckets[bucket_key] = buckets.get(bucket_key, 0.0) + credits
+    return [{"at": k, "credits_releasing": round(v, 4)} for k, v in sorted(buckets.items())]
 
 
 def _today_bounds() -> tuple[str, str]:
@@ -46,7 +62,16 @@ def _in_range(timestamp: str, since: str, until: str) -> bool:
 _EFFORT_ORDER = {"xhigh": 0, "high": 1, "medium": 2, "low": 3, "none": 4}
 
 
-def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: dict) -> dict:
+def _aggregate(
+    events: list[dict],
+    since: str,
+    until: str,
+    pricing: dict,
+    cfg: dict,
+    now: datetime | None = None,
+) -> dict:
+    if now is None:
+        now = datetime.now(timezone.utc)
     cpd = cfg["credits_per_dollar"]
     pool_limit = cfg["weekly_pool_credits"]
 
@@ -302,18 +327,28 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
 
     effort_levels = sorted(effort_map.values(), key=lambda x: _EFFORT_ORDER.get(x["effort"], 99))
 
-    # Totals — computed per-event so per-session auth overrides are reflected correctly.
-    oauth_credits = 0.0
+    # Totals for the queried range — computed per-event so per-session auth overrides are reflected.
+    range_oauth_credits = 0.0
     api_token_usd = 0.0
     for e in filtered:
         e_usd = tokens_to_usd(e["model"], e, pricing)
         if e.get("auth_type", "oauth") == "oauth":
-            oauth_credits += usd_to_credits(e_usd, cpd)
+            range_oauth_credits += usd_to_credits(e_usd, cpd)
         else:
             api_token_usd += e_usd
     total_usd = sum(r["usd"] for r in projects_map.values())
     total_tokens = sum(r["total_tokens"] for r in projects_map.values())
-    pool_pct = round(oauth_credits / pool_limit * 100, 1) if pool_limit > 0 else 0.0
+
+    # Pool stats always reflect the rolling 7-day window anchored at now, regardless of
+    # the queried range, so the pool bar is accurate even on historical queries.
+    rolling_since, rolling_until = _rolling_bounds(now)
+    pool_oauth_credits = 0.0
+    for e in events:
+        if e.get("auth_type", "oauth") != "oauth":
+            continue
+        if _in_range(e["timestamp"], rolling_since, rolling_until):
+            pool_oauth_credits += usd_to_credits(tokens_to_usd(e["model"], e, pricing), cpd)
+    pool_pct = round(pool_oauth_credits / pool_limit * 100, 1) if pool_limit > 0 else 0.0
 
     has_oauth = any(e.get("auth_type", "oauth") == "oauth" for e in filtered)
     has_api_token = any(e.get("auth_type") == "api_token" for e in filtered)
@@ -332,12 +367,14 @@ def _aggregate(events: list[dict], since: str, until: str, pricing: dict, cfg: d
         "totals": {
             "total_tokens": total_tokens,
             "usd": round(total_usd, 4),
-            "credits": round(oauth_credits, 4),
+            "credits": round(range_oauth_credits, 4),
         },
         "pool": {
-            "used": round(oauth_credits, 4),
+            "used": round(pool_oauth_credits, 4),
             "limit": pool_limit,
             "pct": pool_pct,
+            "now": now.strftime("%Y-%m-%dT%H:%M"),
+            "release_schedule": _release_schedule(events, now, pricing, cpd),
         },
         "api_token_totals": {"usd": round(api_token_usd, 4)},
         "has_oauth": has_oauth,
@@ -399,10 +436,11 @@ def build_handler(cfg: dict):
                     return _send_json(self, {"error": "invalid until — expected YYYY-MM-DD"}, 400)
                 overrides = cfg.get("session_auth_overrides") or {}
                 events = scan_all_projects_cached(cfg["projects"], overrides)
-                def_bounds = _week_bounds() if path == "/api/week" else _today_bounds()
+                now = datetime.now(timezone.utc)
+                def_bounds = _rolling_bounds(now) if path == "/api/week" else _today_bounds()
                 since = qs_since if qs_since else def_bounds[0]
                 until = qs_until if qs_until else def_bounds[1]
-                result = _aggregate(events, since, until, pricing, cfg)
+                result = _aggregate(events, since, until, pricing, cfg, now=now)
                 result["config"] = {
                     "credits_per_dollar": cfg["credits_per_dollar"],
                     "weekly_pool_credits": cfg["weekly_pool_credits"],
@@ -430,7 +468,7 @@ def build_handler(cfg: dict):
                 self.send_response(404)
                 self.end_headers()
                 return
-            session_id = unquote(path[len("/api/sessions/"):-len("/auth")])
+            session_id = unquote(path[len("/api/sessions/") : -len("/auth")])
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length)) if length else {}
             auth_type = body.get("auth_type")
